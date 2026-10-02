@@ -15,6 +15,8 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 - Supports custom covers for songs and playlists through the native Files importer.
 - Provides song details with metadata, playlist assignment, and permanent local deletion.
 - Provides playlist details with cover upload and add/remove song management.
+- Song rows provide an ellipsis menu for details, playlist assignment, play-next, rename, and permanent deletion.
+- Reads embedded lyrics and supports uploaded UTF-8 LRC/text lyrics with synchronized scrolling in Now Playing.
 - Cleans deleted songs out of playlists and playback statistics automatically.
 - Shows local videos in global search and on the matching artist page, then plays them with the system video player.
 - Includes a floating mini player and full Now Playing screen in a dark glass design.

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @ObservedObject var player: MusicPlayerViewModel
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
     @State private var isSeeking = false
     @State private var seekValue: TimeInterval = 0
@@ -14,14 +15,24 @@ struct NowPlayingView: View {
                 VStack(spacing: 26) {
                     Spacer(minLength: 8)
 
-                    ArtworkView(track: player.currentTrack, size: 292, cornerRadius: 30)
-                        .rotationEffect(.degrees(player.isPlaying ? 360 : 0))
-                        .animation(
-                            player.isPlaying
-                                ? .linear(duration: 24).repeatForever(autoreverses: false)
-                                : .default,
-                            value: player.isPlaying
+                    TabView {
+                        ArtworkView(track: player.currentTrack, size: 282, cornerRadius: 30)
+                            .rotationEffect(.degrees(player.isPlaying ? 360 : 0))
+                            .animation(
+                                player.isPlaying
+                                    ? .linear(duration: 24).repeatForever(autoreverses: false)
+                                    : .default,
+                                value: player.isPlaying
+                            )
+                        SyncedLyricsView(
+                            lyrics: player.currentTrack?.lyrics,
+                            currentTime: player.currentTime,
+                            emptyText: settings.text("noLyrics")
                         )
+                        .padding(.horizontal, 24)
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .automatic))
+                    .frame(height: 310)
 
                     VStack(spacing: 7) {
                         Text(player.currentTrack?.title ?? "Not Playing")
@@ -115,6 +126,93 @@ struct NowPlayingView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+private struct LyricLine: Identifiable {
+    let id: Int
+    let time: TimeInterval
+    let text: String
+}
+
+private struct SyncedLyricsView: View {
+    let lyrics: String?
+    let currentTime: TimeInterval
+    let emptyText: String
+
+    private var lines: [LyricLine] { Self.parse(lyrics ?? "") }
+    private var activeLineID: Int? {
+        lines.last(where: { $0.time <= currentTime + 0.05 })?.id
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                if lines.isEmpty {
+                    Text(emptyText)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 270)
+                } else {
+                    LazyVStack(spacing: 18) {
+                        Color.clear.frame(height: 100)
+                        ForEach(lines) { line in
+                            Text(line.text)
+                                .font(activeLineID == line.id ? .title3.bold() : .body)
+                                .foregroundStyle(activeLineID == line.id ? Color.primary : Color.secondary)
+                                .multilineTextAlignment(.center)
+                                .scaleEffect(activeLineID == line.id ? 1 : 0.94)
+                                .animation(.easeInOut(duration: 0.25), value: activeLineID)
+                                .id(line.id)
+                        }
+                        Color.clear.frame(height: 100)
+                    }
+                }
+            }
+            .onChange(of: activeLineID) { id in
+                guard let id else { return }
+                withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(id, anchor: .center) }
+            }
+        }
+        .mask(LinearGradient(colors: [.clear, .black, .black, .clear], startPoint: .top, endPoint: .bottom))
+    }
+
+    private static func parse(_ source: String) -> [LyricLine] {
+        let pattern = #"\[(\d{1,2}):(\d{2})(?:[\.:](\d{1,3}))?\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        var parsed: [(TimeInterval, String)] = []
+
+        for rawLine in source.components(separatedBy: .newlines) {
+            let range = NSRange(rawLine.startIndex..., in: rawLine)
+            let matches = regex.matches(in: rawLine, range: range)
+            let text = regex.stringByReplacingMatches(in: rawLine, range: range, withTemplate: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !matches.isEmpty, !text.isEmpty else { continue }
+
+            for match in matches {
+                guard let minuteRange = Range(match.range(at: 1), in: rawLine),
+                      let secondRange = Range(match.range(at: 2), in: rawLine) else { continue }
+                let minutes = Double(rawLine[minuteRange]) ?? 0
+                let seconds = Double(rawLine[secondRange]) ?? 0
+                var fraction = 0.0
+                if match.range(at: 3).location != NSNotFound,
+                   let fractionRange = Range(match.range(at: 3), in: rawLine) {
+                    let digits = String(rawLine[fractionRange])
+                    fraction = (Double(digits) ?? 0) / pow(10, Double(digits.count))
+                }
+                parsed.append((minutes * 60 + seconds + fraction, text))
+            }
+        }
+
+        if parsed.isEmpty {
+            return source.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .enumerated()
+                .map { LyricLine(id: $0.offset, time: .infinity, text: $0.element) }
+        }
+        return parsed.sorted { $0.0 < $1.0 }.enumerated().map {
+            LyricLine(id: $0.offset, time: $0.element.0, text: $0.element.1)
         }
     }
 }

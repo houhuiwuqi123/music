@@ -60,7 +60,7 @@ struct RootView: View {
         .preferredColorScheme(.dark)
         .overlay(alignment: .bottom) {
             MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
-            .padding(.bottom, 68)
+                .padding(.bottom, 58)
         }
         .fileImporter(
             isPresented: $showsImporter,

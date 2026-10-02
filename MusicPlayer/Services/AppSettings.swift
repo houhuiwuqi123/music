@@ -54,7 +54,11 @@ final class AppSettings: ObservableObject {
             "details": ("详情", "Details"), "changeCover": ("上传封面", "Upload Cover"),
             "addSongs": ("添加音乐", "Add Songs"), "manageSongs": ("管理音乐", "Manage Songs"),
             "album": ("专辑", "Album"), "duration": ("时长", "Duration"),
-            "file": ("本地文件", "Local File"), "added": ("已添加", "Added")
+            "file": ("本地文件", "Local File"), "added": ("已添加", "Added"),
+            "playNext": ("下一首播放", "Play Next"), "rename": ("修改名称", "Rename"),
+            "songName": ("歌曲名称", "Song Name"), "save": ("保存", "Save"),
+            "lyrics": ("歌词", "Lyrics"), "noLyrics": ("暂无歌词", "No Lyrics"),
+            "uploadLyrics": ("上传歌词", "Upload Lyrics")
         ]
         guard let value = translations[key] else { return key }
         return language == .chinese ? value.zh : value.en

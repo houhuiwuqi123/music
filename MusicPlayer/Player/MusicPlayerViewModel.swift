@@ -103,6 +103,19 @@ final class MusicPlayerViewModel: ObservableObject {
         queue = tracks
         if let id = currentTrack?.id {
             currentIndex = tracks.firstIndex(where: { $0.id == id })
+            if let updatedTrack = tracks.first(where: { $0.id == id }) { currentTrack = updatedTrack }
+        }
+    }
+
+    func insertNext(_ track: Track) {
+        queue.removeAll { $0.id == track.id && $0.id != currentTrack?.id }
+        if let currentID = currentTrack?.id {
+            currentIndex = queue.firstIndex(where: { $0.id == currentID })
+        }
+        let insertionIndex = min((currentIndex ?? -1) + 1, queue.count)
+        queue.insert(track, at: insertionIndex)
+        if let currentID = currentTrack?.id {
+            currentIndex = queue.firstIndex(where: { $0.id == currentID })
         }
     }
 

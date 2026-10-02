@@ -29,9 +29,6 @@ struct SettingsView: View {
                     NavigationLink(settings.text("policy")) {
                         PolicyView()
                     }
-                    Link(destination: URL(string: "mailto:support@example.com")!) {
-                        Label(settings.text("support"), systemImage: "envelope")
-                    }
                 }
             }
             .scrollContentBackground(.hidden)

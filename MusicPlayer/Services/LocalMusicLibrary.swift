@@ -174,6 +174,20 @@ final class LocalMusicLibrary: ObservableObject {
         saveLibrary()
     }
 
+    func renameTrack(id: UUID, to name: String) {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, let index = tracks.firstIndex(where: { $0.id == id }) else { return }
+        tracks[index].title = cleaned
+        tracks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        saveLibrary()
+    }
+
+    func updateLyrics(_ lyrics: String, for trackID: UUID) {
+        guard let index = tracks.firstIndex(where: { $0.id == trackID }) else { return }
+        tracks[index].lyrics = lyrics
+        saveLibrary()
+    }
+
     func readSecurityScopedData(from url: URL) throws -> Data {
         let hasAccess = url.startAccessingSecurityScopedResource()
         defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
@@ -199,6 +213,8 @@ final class LocalMusicLibrary: ObservableObject {
         let artist = await metadata.text(for: .commonIdentifierArtist) ?? "Unknown Artist"
         let album = await metadata.text(for: .commonIdentifierAlbumName) ?? "Unknown Album"
         let artworkData = await metadata.data(for: .commonIdentifierArtwork)
+        let embeddedLyrics = await metadata.text(containingIdentifier: "lyrics")
+        let sidecarLyrics = try? String(contentsOf: url.deletingPathExtension().appendingPathExtension("lrc"), encoding: .utf8)
 
         return Track(
             title: title,
@@ -206,7 +222,8 @@ final class LocalMusicLibrary: ObservableObject {
             albumName: album,
             duration: duration.isFinite ? duration : 0,
             fileURL: url,
-            artworkData: artworkData
+            artworkData: artworkData,
+            lyrics: embeddedLyrics ?? sidecarLyrics
         )
     }
 
@@ -316,5 +333,12 @@ private extension Array where Element == AVMetadataItem {
             return nil
         }
         return try? await item.load(.dataValue)
+    }
+
+    func text(containingIdentifier fragment: String) async -> String? {
+        guard let item = first(where: { $0.identifier?.rawValue.localizedCaseInsensitiveContains(fragment) == true }) else {
+            return nil
+        }
+        return try? await item.load(.stringValue)
     }
 }

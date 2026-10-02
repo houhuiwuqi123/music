@@ -42,7 +42,7 @@ struct TrackRow: View {
                 ArtworkView(track: track, size: 50, cornerRadius: 14)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(track.title).font(.body.weight(.semibold)).lineLimit(1)
-                    Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(track.artist).font(.caption.weight(.medium)).foregroundStyle(.white.opacity(0.68)).lineLimit(1)
                 }
                 Spacer(minLength: 8)
                 if let trailingText {
