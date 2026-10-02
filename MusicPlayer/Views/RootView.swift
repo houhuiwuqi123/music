@@ -35,6 +35,7 @@ struct RootView: View {
                 }
                 .tint(.purple)
             }
+            .padding(.top, 8)
 
             if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 searchResults
@@ -57,8 +58,9 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .safeAreaInset(edge: .bottom, spacing: -1) {
+        .overlay(alignment: .bottom) {
             MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
+            .padding(.bottom, 68)
         }
         .fileImporter(
             isPresented: $showsImporter,
@@ -106,7 +108,7 @@ struct RootView: View {
             }
             Spacer()
             VStack(spacing: 1) {
-                Text("AURA").font(.caption.weight(.black)).tracking(4).foregroundStyle(.purple)
+                Text("AURA MUSIC").font(.caption.weight(.black)).tracking(3).foregroundStyle(.purple)
                 Text(currentTitle).font(.headline)
             }
             Spacer()

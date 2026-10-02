@@ -3,6 +3,7 @@ import UIKit
 
 struct ArtworkView: View {
     let track: Track?
+    var artworkData: Data? = nil
     var size: CGFloat = 52
     var cornerRadius: CGFloat = 12
 
@@ -19,7 +20,7 @@ struct ArtworkView: View {
 
     var body: some View {
         ZStack {
-            if let data = track?.artworkData, let image = UIImage(data: data) {
+            if let data = artworkData ?? track?.artworkData, let image = UIImage(data: data) {
                 Image(uiImage: image).resizable().scaledToFill()
             } else {
                 LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)

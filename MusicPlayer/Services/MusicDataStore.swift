@@ -48,6 +48,13 @@ final class MusicDataStore: ObservableObject {
         save(playlists, file: playlistsFile)
     }
 
+    func updateArtwork(_ artworkData: Data, for playlistID: UUID) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+        playlists[index].artworkData = artworkData
+        playlists[index].updatedAt = Date()
+        save(playlists, file: playlistsFile)
+    }
+
     func tracks(in playlist: Playlist, library: [Track]) -> [Track] {
         playlist.trackIDs.compactMap { id in library.first(where: { $0.id == id }) }
     }

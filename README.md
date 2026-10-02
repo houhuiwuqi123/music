@@ -1,4 +1,4 @@
-# Local Music — SwiftUI iOS Player
+# AURA MUSIC — SwiftUI iOS Player
 
 A modern, local-first music player built with SwiftUI and AVFoundation for iOS 16 and later.
 
@@ -12,6 +12,9 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 - Provides Home, Songs, Artists, and Playlists tabs with global search.
 - Tracks recent plays and play-count rankings locally.
 - Supports persistent playlists; a song can belong to multiple playlists.
+- Supports custom covers for songs and playlists through the native Files importer.
+- Provides song details with metadata, playlist assignment, and permanent local deletion.
+- Provides playlist details with cover upload and add/remove song management.
 - Cleans deleted songs out of playlists and playback statistics automatically.
 - Shows local videos in global search and on the matching artist page, then plays them with the system video player.
 - Includes a floating mini player and full Now Playing screen in a dark glass design.

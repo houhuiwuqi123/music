@@ -4,13 +4,15 @@ struct Playlist: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     var trackIDs: [UUID]
+    var artworkData: Data?
     let createdAt: Date
     var updatedAt: Date
 
-    init(id: UUID = UUID(), name: String, trackIDs: [UUID] = [], createdAt: Date = Date(), updatedAt: Date = Date()) {
+    init(id: UUID = UUID(), name: String, trackIDs: [UUID] = [], artworkData: Data? = nil, createdAt: Date = Date(), updatedAt: Date = Date()) {
         self.id = id
         self.name = name
         self.trackIDs = trackIDs
+        self.artworkData = artworkData
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

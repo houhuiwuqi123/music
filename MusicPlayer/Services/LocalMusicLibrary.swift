@@ -168,6 +168,27 @@ final class LocalMusicLibrary: ObservableObject {
         saveLibrary()
     }
 
+    func updateArtwork(_ artworkData: Data, for trackID: UUID) {
+        guard let index = tracks.firstIndex(where: { $0.id == trackID }) else { return }
+        tracks[index].artworkData = artworkData
+        saveLibrary()
+    }
+
+    func readSecurityScopedData(from url: URL) throws -> Data {
+        let hasAccess = url.startAccessingSecurityScopedResource()
+        defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
+
+        let coordinator = NSFileCoordinator()
+        var coordinationError: NSError?
+        var readResult: Result<Data, Error>?
+        coordinator.coordinate(readingItemAt: url, options: [], error: &coordinationError) { readableURL in
+            readResult = Result { try Data(contentsOf: readableURL) }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let readResult else { throw CocoaError(.fileReadUnknown) }
+        return try readResult.get()
+    }
+
     private func makeTrack(from url: URL) async throws -> Track {
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
