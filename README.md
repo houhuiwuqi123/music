@@ -13,7 +13,7 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 - Tracks recent plays and play-count rankings locally.
 - Supports persistent playlists; a song can belong to multiple playlists.
 - Cleans deleted songs out of playlists and playback statistics automatically.
-- Shows local MP4, MOV, and M4V videos on the matching artist page and plays them with the system video player.
+- Shows local videos in global search and on the matching artist page, then plays them with the system video player.
 - Includes a floating mini player and full Now Playing screen in a dark glass design.
 - Includes Chinese/English settings, notification permission, version, policy, and support views.
 - Sends an optional local notification after media import completes.
@@ -37,7 +37,7 @@ The app cannot read arbitrary files elsewhere on an iPhone because iOS apps run 
 1. **Files picker:** tap the import button in the app. Selected files are securely copied into `Documents/Imported Music` and indexed immediately.
 2. **Finder or iTunes file sharing:** connect the iPhone to a Mac or PC, open its Files/File Sharing section, select **Local Music**, and copy audio files into the app. Reopen or foreground the app to scan Documents automatically.
 
-The project enables both `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`. Common extensions scanned by the library are MP3, M4A, WAV, AAC, AIF/AIFF, CAF, FLAC, MP4, MOV, and M4V. Actual decoding support depends on the iOS version and the file's codec.
+The project enables both `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`. The scanner accepts every file type declared by iOS as audio or movie. It also explicitly recognizes common audio extensions including MP3, AAC, M4A/M4B, WAV, AIFF, CAF, FLAC, AC3/EAC3, AMR, OGG/OGA, Opus and WMA, plus common video containers including MP4, MOV, M4V, MPEG, 3GP, AVI, MKV, WebM, MTS/M2TS and TS. FLAC is supported directly through AVFoundation on current iOS versions. Playback of any container still requires its internal codec to be supported by the installed iOS version.
 
 ## Structure
 

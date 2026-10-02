@@ -11,6 +11,15 @@ final class LocalMusicLibrary: ObservableObject {
 
     static let supportedTypes: [UTType] = [.audio, .movie]
 
+    static let supportedAudioExtensions: Set<String> = [
+        "aac", "ac3", "aif", "aifc", "aiff", "amr", "au", "caf", "eac3", "flac",
+        "m4a", "m4b", "m4p", "mp1", "mp2", "mp3", "mpa", "ogg", "oga", "opus",
+        "snd", "wav", "wave", "wma"
+    ]
+    static let supportedVideoExtensions: Set<String> = [
+        "3g2", "3gp", "avi", "m2ts", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "mts", "ts", "webm"
+    ]
+
     private let fileManager = FileManager.default
     private let indexFileName = "music-library.json"
     private let videoIndexFileName = "video-library.json"
@@ -37,12 +46,17 @@ final class LocalMusicLibrary: ObservableObject {
                 .compactMap { $0.value.first }
             let knownPaths = Set((tracks.map(\.fileURL) + videos.map(\.fileURL)).map { $0.standardizedFileURL.path })
             let newURLs = uniqueURLs.filter { !knownPaths.contains($0.standardizedFileURL.path) }
+            var failures: [String] = []
 
             for url in newURLs {
-                if Self.isVideo(url) {
-                    videos.append(try await makeVideo(from: url))
-                } else {
-                    tracks.append(try await makeTrack(from: url))
+                do {
+                    if Self.isVideo(url) {
+                        videos.append(try await makeVideo(from: url))
+                    } else {
+                        tracks.append(try await makeTrack(from: url))
+                    }
+                } catch {
+                    failures.append(url.lastPathComponent)
                 }
             }
             tracks.removeAll { !fileManager.fileExists(atPath: $0.fileURL.path) }
@@ -50,6 +64,7 @@ final class LocalMusicLibrary: ObservableObject {
             tracks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
             videos.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
             saveLibrary()
+            if !failures.isEmpty { importError = "Unable to read: \(failures.joined(separator: ", "))" }
         } catch {
             importError = error.localizedDescription
         }
@@ -213,7 +228,14 @@ final class LocalMusicLibrary: ObservableObject {
 
     private func uniqueDestination(for source: URL, in folder: URL) -> URL {
         let ext = source.pathExtension.lowercased()
-        return folder.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
+        let baseName = source.deletingPathExtension().lastPathComponent
+        var destination = folder.appendingPathComponent(baseName).appendingPathExtension(ext)
+        var suffix = 2
+        while fileManager.fileExists(atPath: destination.path) {
+            destination = folder.appendingPathComponent("\(baseName) \(suffix)").appendingPathExtension(ext)
+            suffix += 1
+        }
+        return destination
     }
 
     private static func isSupported(_ url: URL) -> Bool {
@@ -221,11 +243,15 @@ final class LocalMusicLibrary: ObservableObject {
     }
 
     private static func isAudio(_ url: URL) -> Bool {
-        ["mp3", "m4a", "wav", "aac", "aif", "aiff", "caf", "flac"].contains(url.pathExtension.lowercased())
+        let ext = url.pathExtension.lowercased()
+        return supportedAudioExtensions.contains(ext)
+            || UTType(filenameExtension: ext)?.conforms(to: .audio) == true
     }
 
     private static func isVideo(_ url: URL) -> Bool {
-        ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased())
+        let ext = url.pathExtension.lowercased()
+        return supportedVideoExtensions.contains(ext)
+            || UTType(filenameExtension: ext)?.conforms(to: .movie) == true
     }
 }
 

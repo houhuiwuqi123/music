@@ -318,7 +318,7 @@ struct PlaylistDetailView: View {
     }
 }
 
-private struct LocalVideoPlayerSheet: View {
+struct LocalVideoPlayerSheet: View {
     let video: LocalVideo
     @State private var player: AVPlayer
 

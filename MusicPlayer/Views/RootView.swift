@@ -16,6 +16,7 @@ struct RootView: View {
     @State private var showsNowPlaying = false
     @State private var selectedArtist: Artist?
     @State private var selectedPlaylist: Playlist?
+    @State private var selectedVideo: LocalVideo?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -63,6 +64,7 @@ struct RootView: View {
         .sheet(item: $selectedPlaylist) { playlist in
             NavigationStack { PlaylistDetailView(playlistID: playlist.id) }
         }
+        .sheet(item: $selectedVideo) { LocalVideoPlayerSheet(video: $0) }
         .sheet(isPresented: $showsNowPlaying) {
             NowPlayingView(player: player)
                 .presentationDragIndicator(.visible)
@@ -127,6 +129,7 @@ struct RootView: View {
         let tracks = library.tracks.filter { $0.title.localizedCaseInsensitiveContains(query) || $0.artist.localizedCaseInsensitiveContains(query) || $0.albumName.localizedCaseInsensitiveContains(query) }
         let artists = dataStore.artists(from: library.tracks, videos: library.videos).filter { $0.name.localizedCaseInsensitiveContains(query) }
         let playlists = dataStore.playlists.filter { $0.name.localizedCaseInsensitiveContains(query) }
+        let videos = library.videos.filter { $0.title.localizedCaseInsensitiveContains(query) || $0.artist.localizedCaseInsensitiveContains(query) }
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -143,7 +146,16 @@ struct RootView: View {
                         Label(playlist.name, systemImage: "rectangle.stack").frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.plain)
                 }
-                if tracks.isEmpty && artists.isEmpty && playlists.isEmpty {
+                ForEach(videos.prefix(5)) { video in
+                    Button { player.pause(); selectedVideo = video; searchText = "" } label: {
+                        HStack {
+                            Label(video.title, systemImage: "play.rectangle.fill")
+                            Spacer()
+                            Text(settings.text("video")).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }.buttonStyle(.plain)
+                }
+                if tracks.isEmpty && artists.isEmpty && playlists.isEmpty && videos.isEmpty {
                     Text(settings.text("noResults")).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                 }
             }

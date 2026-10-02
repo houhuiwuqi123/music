@@ -40,7 +40,7 @@ final class AppSettings: ObservableObject {
             "cancel": ("取消", "Cancel"), "create": ("创建", "Create"), "tracks": ("首歌曲", "tracks"),
             "songsSection": ("歌曲", "Songs"), "videos": ("视频", "Videos"),
             "noVideos": ("暂无本地视频", "No local videos"), "noMusic": ("暂无本地音乐", "No Local Music"),
-            "importHint": ("从“文件”导入 MP3、M4A 或 WAV，或通过 Finder 将音频放入此 App 的 Documents。", "Import MP3, M4A, or WAV from Files, or add audio to this app's Documents in Finder."),
+            "importHint": ("从“文件”导入音乐或视频（包括 FLAC），也可通过 Finder 放入此 App 的 Documents。", "Import music or video, including FLAC, from Files or add it to this app's Documents in Finder."),
             "addPlaylist": ("添加到歌单", "Add to Playlist"), "removePlaylist": ("从歌单移除", "Remove from Playlist"),
             "plays": ("次播放", "plays"), "nowPlaying": ("正在播放", "Now Playing"),
             "playAll": ("播放全部", "Play All"), "shufflePlay": ("随机播放", "Shuffle Play"),
@@ -49,7 +49,8 @@ final class AppSettings: ObservableObject {
             "itemsImported": ("个本地媒体文件已加入资料库。", "local media items were added to your library."),
             "unknownArtist": ("未知艺人", "Unknown Artist"), "noResults": ("没有搜索结果", "No Results"),
             "done": ("完成", "Done"), "importFailed": ("导入失败", "Import Failed"), "ok": ("好", "OK"),
-            "privacyBody": ("音乐文件、歌单和播放历史仅保存在本机。本应用不会上传或分享本地媒体。通知权限为可选项，可随时在 iOS 设置中更改。", "Your music files, playlists, and playback history stay on this device. The app does not upload or share your local media. Notification permission is optional and can be changed in iOS Settings at any time.")
+            "privacyBody": ("音乐文件、歌单和播放历史仅保存在本机。本应用不会上传或分享本地媒体。通知权限为可选项，可随时在 iOS 设置中更改。", "Your music files, playlists, and playback history stay on this device. The app does not upload or share your local media. Notification permission is optional and can be changed in iOS Settings at any time."),
+            "video": ("视频", "Video")
         ]
         guard let value = translations[key] else { return key }
         return language == .chinese ? value.zh : value.en
