@@ -4,7 +4,7 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 
 ## Features
 
-- Imports multiple audio and video files with `UIDocumentPickerViewController`.
+- Imports multiple audio and video files with SwiftUI's native `fileImporter`.
 - Copies imported audio into the app's Documents/Imported Music directory.
 - Recursively detects compatible files copied directly into the app's Documents directory.
 - Reads title, artist, album, duration, and embedded artwork with `AVURLAsset`.
@@ -34,10 +34,17 @@ The deployment target is iOS 16.0. No third-party packages are required.
 
 The app cannot read arbitrary files elsewhere on an iPhone because iOS apps run in a sandbox. Use either supported workflow:
 
-1. **Files picker:** tap the import button in the app. Selected files are securely copied into `Documents/Imported Music` and indexed immediately.
+1. **Native Files picker:** tap the import button in the app. SwiftUI `fileImporter` opens the system Files interface. Selected files from On My iPhone, iCloud Drive, Downloads, or an installed provider are accessed through security-scoped URLs, coordinated with the provider, copied into `Documents/Imported Music`, and indexed immediately.
 2. **Finder or iTunes file sharing:** connect the iPhone to a Mac or PC, open its Files/File Sharing section, select **Local Music**, and copy audio files into the app. Reopen or foreground the app to scan Documents automatically.
 
 The project enables both `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`. The scanner accepts every file type declared by iOS as audio or movie. It also explicitly recognizes common audio extensions including MP3, AAC, M4A/M4B, WAV, AIFF, CAF, FLAC, AC3/EAC3, AMR, OGG/OGA, Opus and WMA, plus common video containers including MP4, MOV, M4V, MPEG, 3GP, AVI, MKV, WebM, MTS/M2TS and TS. FLAC is supported directly through AVFoundation on current iOS versions. Playback of any container still requires its internal codec to be supported by the installed iOS version.
+
+### Development and Simulator files
+
+- In Simulator, first place media in a location visible to the simulated **Files** app, such as iCloud Drive or a provider exposed in Browse, then use the app's import button.
+- On a development iPhone, choose files from **On My iPhone**, **Downloads**, iCloud Drive, or another enabled Files provider.
+- Provider and iCloud files may be placeholders. The app uses `NSFileCoordinator` while its security-scoped permission is active, allowing the provider to download the selected file before it is copied.
+- Direct access to arbitrary Mac folders or paths outside the iOS sandbox is intentionally unavailable. Files must be selected through `fileImporter` or copied through Finder file sharing.
 
 ## Structure
 
@@ -47,12 +54,11 @@ The project enables both `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsI
 - `Services/MusicDataStore.swift` — persistent playlists, recent history, and rankings.
 - `Services/AppSettings.swift` — app language, notification preference, and localized labels.
 - `Player/MusicPlayerViewModel.swift` — AVPlayer engine and playback state.
-- `Views/RootView.swift` — global toolbar, search, tabs, import flow, and floating player.
+- `Views/RootView.swift` — global toolbar, search, tabs, native SwiftUI `fileImporter`, and floating player.
 - `Views/FeatureViews.swift` — Home, Songs, Artists, Playlists, and detail screens.
 - `Views/GlassComponents.swift` — reusable dark glass cards, rows, and backgrounds.
 - `Views/MiniPlayerView.swift` — persistent bottom controls.
 - `Views/NowPlayingView.swift` — artwork, seek slider, controls, and repeat mode.
-- `Views/DocumentPicker.swift` — SwiftUI bridge for the system file picker.
 
 ## Notes
 

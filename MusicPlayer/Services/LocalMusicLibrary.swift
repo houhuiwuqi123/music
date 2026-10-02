@@ -7,9 +7,12 @@ import UniformTypeIdentifiers
 final class LocalMusicLibrary: ObservableObject {
     @Published private(set) var tracks: [Track] = []
     @Published private(set) var videos: [LocalVideo] = []
+    @Published private(set) var isImporting = false
     @Published var importError: String?
 
-    static let supportedTypes: [UTType] = [.audio, .movie]
+    // `.item` keeps provider-specific audio/video types selectable. Files are
+    // validated after selection before being copied into the app sandbox.
+    static let importableTypes: [UTType] = [.item]
 
     static let supportedAudioExtensions: Set<String> = [
         "aac", "ac3", "aif", "aifc", "aiff", "amr", "au", "caf", "eac3", "flac",
@@ -71,6 +74,9 @@ final class LocalMusicLibrary: ObservableObject {
     }
 
     func importFiles(from urls: [URL]) async {
+        guard !isImporting else { return }
+        isImporting = true
+        defer { isImporting = false }
         importError = nil
 
         do {
@@ -79,7 +85,11 @@ final class LocalMusicLibrary: ObservableObject {
             var importedVideos: [LocalVideo] = []
             var failures: [String] = []
 
-            for sourceURL in urls where Self.isSupported(sourceURL) {
+            for sourceURL in urls {
+                guard Self.isSupported(sourceURL) else {
+                    failures.append(sourceURL.lastPathComponent)
+                    continue
+                }
                 do {
                     let result = try await importFile(sourceURL, into: folder)
                     switch result {
@@ -113,7 +123,7 @@ final class LocalMusicLibrary: ObservableObject {
 
         let destination = uniqueDestination(for: sourceURL, in: folder)
         do {
-            try fileManager.copyItem(at: sourceURL, to: destination)
+            try coordinatedCopy(from: sourceURL, to: destination)
             if Self.isVideo(destination) {
                 return .video(try await makeVideo(from: destination))
             }
@@ -122,6 +132,23 @@ final class LocalMusicLibrary: ObservableObject {
             try? fileManager.removeItem(at: destination)
             throw error
         }
+    }
+
+    private func coordinatedCopy(from source: URL, to destination: URL) throws {
+        let coordinator = NSFileCoordinator()
+        var coordinationError: NSError?
+        var copyError: Error?
+
+        coordinator.coordinate(readingItemAt: source, options: [], error: &coordinationError) { readableURL in
+            do {
+                try fileManager.copyItem(at: readableURL, to: destination)
+            } catch {
+                copyError = error
+            }
+        }
+
+        if let coordinationError { throw coordinationError }
+        if let copyError { throw copyError }
     }
 
     func removeTracks(at offsets: IndexSet) {

@@ -50,7 +50,7 @@ final class AppSettings: ObservableObject {
             "unknownArtist": ("未知艺人", "Unknown Artist"), "noResults": ("没有搜索结果", "No Results"),
             "done": ("完成", "Done"), "importFailed": ("导入失败", "Import Failed"), "ok": ("好", "OK"),
             "privacyBody": ("音乐文件、歌单和播放历史仅保存在本机。本应用不会上传或分享本地媒体。通知权限为可选项，可随时在 iOS 设置中更改。", "Your music files, playlists, and playback history stay on this device. The app does not upload or share your local media. Notification permission is optional and can be changed in iOS Settings at any time."),
-            "video": ("视频", "Video")
+            "video": ("视频", "Video"), "importing": ("正在导入媒体…", "Importing media…")
         ]
         guard let value = translations[key] else { return key }
         return language == .chinese ? value.zh : value.en

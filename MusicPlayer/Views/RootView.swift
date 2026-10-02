@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RootView: View {
     enum Tab: Hashable { case home, songs, artists, playlists }
@@ -41,22 +42,30 @@ struct RootView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(5)
             }
+
+            if library.isImporting {
+                VStack(spacing: 12) {
+                    ProgressView().controlSize(.large).tint(.purple)
+                    Text(settings.text("importing")).font(.subheadline.weight(.semibold))
+                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 22)
+                .glassCard(cornerRadius: 22)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.black.opacity(0.35))
+                .zIndex(10)
+            }
         }
         .preferredColorScheme(.dark)
         .safeAreaInset(edge: .bottom, spacing: -1) {
             MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
         }
-        .sheet(isPresented: $showsImporter) {
-            DocumentPicker(contentTypes: LocalMusicLibrary.supportedTypes) { urls in
-                Task {
-                    let previousCount = library.tracks.count + library.videos.count
-                    await library.importFiles(from: urls)
-                    player.updateQueue(library.tracks)
-                    let importedCount = library.tracks.count + library.videos.count - previousCount
-                    settings.notifyImportCompleted(count: importedCount)
-                }
-            }
-        }
+        .fileImporter(
+            isPresented: $showsImporter,
+            allowedContentTypes: LocalMusicLibrary.importableTypes,
+            allowsMultipleSelection: true,
+            onCompletion: handleFileImport
+        )
         .sheet(isPresented: $showsSettings) { SettingsView() }
         .sheet(item: $selectedArtist) { artist in
             NavigationStack { ArtistDetailView(artist: artist) }
@@ -104,6 +113,7 @@ struct RootView: View {
             Button { showsImporter = true } label: {
                 Image(systemName: "square.and.arrow.down.fill").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
             }
+            .disabled(library.isImporting)
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 17)
@@ -177,5 +187,20 @@ struct RootView: View {
 
     private var importErrorIsPresented: Binding<Bool> {
         Binding(get: { library.importError != nil }, set: { if !$0 { library.importError = nil } })
+    }
+
+    private func handleFileImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            Task {
+                let previousCount = library.tracks.count + library.videos.count
+                await library.importFiles(from: urls)
+                player.updateQueue(library.tracks)
+                let importedCount = library.tracks.count + library.videos.count - previousCount
+                settings.notifyImportCompleted(count: importedCount)
+            }
+        case .failure(let error):
+            library.importError = error.localizedDescription
+        }
     }
 }
