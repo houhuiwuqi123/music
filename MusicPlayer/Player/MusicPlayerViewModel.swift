@@ -39,7 +39,9 @@ final class MusicPlayerViewModel: ObservableObject {
         currentTrack = track
         duration = track.duration
         currentTime = 0
-        player.replaceCurrentItem(with: AVPlayerItem(url: track.fileURL))
+        let item = AVPlayerItem(url: track.fileURL)
+        observePlaybackEnd(for: item)
+        player.replaceCurrentItem(with: item)
         player.play()
         isPlaying = true
     }
@@ -105,8 +107,8 @@ final class MusicPlayerViewModel: ObservableObject {
 
     private func observePlayback() {
         let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
-        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            Task { @MainActor in
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.currentTime = time.seconds.isFinite ? time.seconds : 0
                 if let seconds = self.player.currentItem?.duration.seconds, seconds.isFinite {
@@ -114,15 +116,19 @@ final class MusicPlayerViewModel: ObservableObject {
                 }
             }
         }
+    }
 
+    private func observePlaybackEnd(for item: AVPlayerItem) {
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+        }
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
-            object: nil,
+            object: item,
             queue: .main
-        ) { [weak self] notification in
-            Task { @MainActor in
-                guard let self, notification.object as AnyObject? === self.player.currentItem else { return }
-                self.handlePlaybackEnded()
+        ) { _ in
+            Task { @MainActor [weak self] in
+                self?.handlePlaybackEnded()
             }
         }
     }
