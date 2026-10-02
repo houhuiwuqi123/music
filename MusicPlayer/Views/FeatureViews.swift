@@ -83,52 +83,55 @@ struct SongsView: View {
                 if library.tracks.isEmpty {
                     Color.clear
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(library.tracks) { track in
-                                HStack(spacing: 10) {
-                                    TrackRow(track: track, trailingText: track.duration.musicTime) {
-                                        player.play(track, in: library.tracks)
+                    List {
+                        ForEach(library.tracks) { track in
+                            HStack(spacing: 10) {
+                                TrackRow(track: track, trailingText: track.duration.musicTime) {
+                                    player.play(track, in: library.tracks)
+                                }
+                                Menu {
+                                    Button { navigationPath.append(track) } label: {
+                                        Label(settings.text("details"), systemImage: "info.circle")
                                     }
-                                    Menu {
-                                        Button { navigationPath.append(track) } label: {
-                                            Label(settings.text("details"), systemImage: "info.circle")
-                                        }
-                                        if !dataStore.playlists.isEmpty {
-                                            Menu(settings.text("addPlaylist")) {
-                                                ForEach(dataStore.playlists) { playlist in
-                                                    Button(playlist.name) { dataStore.add(track.id, to: playlist.id) }
-                                                }
+                                    if !dataStore.playlists.isEmpty {
+                                        Menu(settings.text("addPlaylist")) {
+                                            ForEach(dataStore.playlists) { playlist in
+                                                Button(playlist.name) { dataStore.add(track.id, to: playlist.id) }
                                             }
                                         }
-                                        Button { player.insertNext(track) } label: {
-                                            Label(settings.text("playNext"), systemImage: "text.line.first.and.arrowtriangle.forward")
-                                        }
-                                        Button {
-                                            editedName = track.title
-                                            renamingTrack = track
-                                        } label: {
-                                            Label(settings.text("rename"), systemImage: "pencil")
-                                        }
-                                        Button(role: .destructive) {
-                                            deletingTrack = track
-                                        } label: {
-                                            Label(settings.text("delete"), systemImage: "trash")
-                                        }
-                                    } label: {
-                                        Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 34, height: 40).foregroundStyle(.secondary)
                                     }
+                                    Button { player.insertNext(track) } label: {
+                                        Label(settings.text("playNext"), systemImage: "text.line.first.and.arrowtriangle.forward")
+                                    }
+                                    Button {
+                                        editedName = track.title
+                                        renamingTrack = track
+                                    } label: {
+                                        Label(settings.text("rename"), systemImage: "pencil")
+                                    }
+                                    Button(role: .destructive) { deletingTrack = track } label: {
+                                        Label(settings.text("delete"), systemImage: "trash")
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 34, height: 40).foregroundStyle(.secondary)
                                 }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 9)
-                                Divider().opacity(0.12).padding(.leading, 80)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .glassCard(cornerRadius: 18)
+                            .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) { deletingTrack = track } label: {
+                                    Label(settings.text("delete"), systemImage: "trash")
+                                }
                             }
                         }
-                        .padding(.vertical, 8)
-                        .glassCard()
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 180)
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 160) }
                 }
             }
             .navigationDestination(for: Track.self) { TrackDetailView(trackID: $0.id) }
@@ -290,30 +293,37 @@ struct ArtistsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(dataStore.artists(from: library.tracks, videos: library.videos)) { artist in
-                        NavigationLink(value: artist) {
-                            HStack(spacing: 14) {
-                                ArtworkView(track: artist.tracks.first, size: 50, cornerRadius: 14)
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(artist.name).font(.headline)
-                                    Text("\(artist.tracks.count) \(settings.text("tracks")) · \(artist.videos.count) \(settings.text("videos"))").font(.caption).foregroundStyle(.secondary)
+            let artists = dataStore.artists(from: library.tracks, videos: library.videos)
+            Group {
+                if artists.isEmpty {
+                    Color.clear
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(artists) { artist in
+                                NavigationLink(value: artist) {
+                                    HStack(spacing: 14) {
+                                        ArtworkView(track: artist.tracks.first, size: 50, cornerRadius: 14)
+                                        VStack(alignment: .leading, spacing: 5) {
+                                            Text(artist.name).font(.headline)
+                                            Text("\(artist.tracks.count) \(settings.text("tracks")) · \(artist.videos.count) \(settings.text("videos"))").font(.caption).foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 9)
                                 }
-                                Spacer()
-                                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                                .buttonStyle(.plain)
+                                Divider().opacity(0.12).padding(.leading, 80)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 9)
                         }
-                        .buttonStyle(.plain)
-                        Divider().opacity(0.12).padding(.leading, 80)
+                        .padding(.vertical, 8)
+                        .glassCard()
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 180)
                     }
                 }
-                .padding(.vertical, 8)
-                .glassCard()
-                .padding(.horizontal, 14)
-                .padding(.bottom, 180)
             }
             .navigationDestination(for: Artist.self) { ArtistDetailView(artist: $0) }
         }
@@ -400,11 +410,15 @@ struct PlaylistsView: View {
     @EnvironmentObject private var settings: AppSettings
     @State private var showsCreate = false
     @State private var playlistName = ""
+    @State private var deletingPlaylist: Playlist?
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(spacing: 0) {
+            Group {
+                if dataStore.playlists.isEmpty {
+                    Color.clear
+                } else {
+                    List {
                     ForEach(dataStore.playlists) { playlist in
                         NavigationLink(value: playlist.id) {
                             let playlistTracks = dataStore.tracks(in: playlist, library: library.tracks)
@@ -420,19 +434,24 @@ struct PlaylistsView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 16)
-                            .padding(.vertical, 9)
+                            .padding(.vertical, 10)
+                            .glassCard(cornerRadius: 18)
                         }
                         .buttonStyle(.plain)
-                        .contextMenu {
-                            Button(settings.text("deletePlaylist"), role: .destructive) { dataStore.deletePlaylist(id: playlist.id) }
+                        .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) { deletingPlaylist = playlist } label: {
+                                Label(settings.text("delete"), systemImage: "trash")
+                            }
                         }
-                        Divider().opacity(0.12).padding(.leading, 80)
                     }
                 }
-                .padding(.vertical, 8)
-                .glassCard()
-                .padding(.horizontal, 14)
-                .padding(.bottom, 180)
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 160) }
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 Button { showsCreate = true } label: {
@@ -450,7 +469,33 @@ struct PlaylistsView: View {
                     showsCreate = false
                 }
             }
+            .confirmationDialog(
+                settings.text("deletePlaylistTitle"),
+                isPresented: Binding(get: { deletingPlaylist != nil }, set: { if !$0 { deletingPlaylist = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button(settings.text("playlistOnly")) { deletePendingPlaylist(songAction: .keep) }
+                Button(settings.text("playlistAndLibrary"), role: .destructive) { deletePendingPlaylist(songAction: .removeFromLibrary) }
+                Button(settings.text("playlistAndFiles"), role: .destructive) { deletePendingPlaylist(songAction: .deleteFiles) }
+                Button(settings.text("cancel"), role: .cancel) { deletingPlaylist = nil }
+            } message: {
+                Text(settings.text("deletePlaylistMessage"))
+            }
         }
+    }
+
+    private enum PlaylistSongAction: Equatable { case keep, removeFromLibrary, deleteFiles }
+
+    private func deletePendingPlaylist(songAction: PlaylistSongAction) {
+        guard let playlist = deletingPlaylist else { return }
+        if songAction != .keep {
+            for track in dataStore.tracks(in: playlist, library: library.tracks) {
+                library.removeTrack(id: track.id, deleteFile: songAction == .deleteFiles)
+            }
+            dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)))
+        }
+        dataStore.deletePlaylist(id: playlist.id)
+        deletingPlaylist = nil
     }
 }
 

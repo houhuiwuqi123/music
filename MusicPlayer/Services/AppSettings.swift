@@ -40,7 +40,7 @@ final class AppSettings: ObservableObject {
             "cancel": ("取消", "Cancel"), "create": ("创建", "Create"), "tracks": ("首歌曲", "tracks"),
             "songsSection": ("歌曲", "Songs"), "videos": ("视频", "Videos"),
             "noVideos": ("暂无本地视频", "No local videos"), "noMusic": ("暂无本地音乐", "No Local Music"),
-            "importHint": ("从“文件”导入音乐或视频（包括 FLAC），也可通过 Finder 放入此 App 的 Documents。", "Import music or video, including FLAC, from Files or add it to this app's Documents in Finder."),
+            "importHint": ("本应用只支持本地音乐播放，需要从“文件”导入音乐或视频", "This app only plays local media. Import music or video from Files."),
             "addPlaylist": ("添加到歌单", "Add to Playlist"), "removePlaylist": ("从歌单移除", "Remove from Playlist"),
             "plays": ("次播放", "plays"), "nowPlaying": ("正在播放", "Now Playing"),
             "playAll": ("播放全部", "Play All"), "shufflePlay": ("随机播放", "Shuffle Play"),
@@ -62,7 +62,12 @@ final class AppSettings: ObservableObject {
             "deleteSongTitle": ("如何删除这首歌曲？", "How would you like to remove this song?"),
             "removeFromLibrary": ("仅从音乐库移除", "Remove from Library Only"),
             "deleteLocalFile": ("删除本地文件", "Delete Local File"),
-            "deleteLocalMessage": ("删除本地文件后无法恢复；仅从音乐库移除会保留设备中的文件。", "Deleting the local file cannot be undone. Removing it from the library keeps the file on this device.")
+            "deleteLocalMessage": ("删除本地文件后无法恢复；仅从音乐库移除会保留设备中的文件。", "Deleting the local file cannot be undone. Removing it from the library keeps the file on this device."),
+            "deletePlaylistTitle": ("删除歌单", "Delete Playlist"),
+            "playlistOnly": ("保留音乐，仅删歌单", "Keep Music, Delete Playlist"),
+            "playlistAndLibrary": ("移出音乐库并删歌单", "Remove Songs and Playlist"),
+            "playlistAndFiles": ("删除本地歌曲和歌单", "Delete Local Songs and Playlist"),
+            "deletePlaylistMessage": ("请选择是否同时处理歌单中的歌曲。", "Choose whether to also remove the songs in this playlist.")
         ]
         guard let value = translations[key] else { return key }
         return language == .chinese ? value.zh : value.en
