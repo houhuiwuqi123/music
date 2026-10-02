@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 
 @MainActor
@@ -16,6 +17,9 @@ final class MusicPlayerViewModel: ObservableObject {
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
     @Published var repeatMode: RepeatMode = .list
+    @Published var shuffleEnabled = false
+
+    var onTrackStarted: ((UUID) -> Void)?
 
     private let player = AVPlayer()
     private var queue: [Track] = []
@@ -44,6 +48,7 @@ final class MusicPlayerViewModel: ObservableObject {
         player.replaceCurrentItem(with: item)
         player.play()
         isPlaying = true
+        onTrackStarted?(track.id)
     }
 
     func togglePlayback() {
@@ -73,7 +78,13 @@ final class MusicPlayerViewModel: ObservableObject {
 
     func next() {
         guard !queue.isEmpty else { return }
-        let nextIndex = ((currentIndex ?? -1) + 1) % queue.count
+        let nextIndex: Int
+        if shuffleEnabled, queue.count > 1 {
+            let candidates = queue.indices.filter { $0 != currentIndex }
+            nextIndex = candidates.randomElement() ?? 0
+        } else {
+            nextIndex = ((currentIndex ?? -1) + 1) % queue.count
+        }
         play(queue[nextIndex], in: queue)
     }
 
@@ -93,6 +104,17 @@ final class MusicPlayerViewModel: ObservableObject {
         if let id = currentTrack?.id {
             currentIndex = tracks.firstIndex(where: { $0.id == id })
         }
+    }
+
+    func toggleShuffle() {
+        shuffleEnabled.toggle()
+    }
+
+    func playAll(_ tracks: [Track], shuffled: Bool = false) {
+        guard !tracks.isEmpty else { return }
+        shuffleEnabled = shuffled
+        let first = shuffled ? (tracks.randomElement() ?? tracks[0]) : tracks[0]
+        play(first, in: tracks)
     }
 
     private func configureAudioSession() {

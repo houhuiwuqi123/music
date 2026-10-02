@@ -15,6 +15,13 @@
 		A10000000000000000000007 /* MiniPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* MiniPlayerView.swift */; };
 		A10000000000000000000008 /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* NowPlayingView.swift */; };
 		A10000000000000000000009 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* LibraryView.swift */; };
+		A1000000000000000000000A /* Playlist.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* Playlist.swift */; };
+		A1000000000000000000000B /* MusicDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* MusicDataStore.swift */; };
+		A1000000000000000000000C /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* AppSettings.swift */; };
+		A1000000000000000000000D /* GlassComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* GlassComponents.swift */; };
+		A1000000000000000000000E /* FeatureViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* FeatureViews.swift */; };
+		A1000000000000000000000F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* SettingsView.swift */; };
+		A10000000000000000000010 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* RootView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +36,13 @@
 		B10000000000000000000009 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B1000000000000000000000B /* Local Music.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Local Music.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1000000000000000000000C /* Playlist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Playlist.swift; sourceTree = "<group>"; };
+		B1000000000000000000000D /* MusicDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicDataStore.swift; sourceTree = "<group>"; };
+		B1000000000000000000000E /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		B1000000000000000000000F /* GlassComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassComponents.swift; sourceTree = "<group>"; };
+		B10000000000000000000010 /* FeatureViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureViews.swift; sourceTree = "<group>"; };
+		B10000000000000000000011 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B10000000000000000000012 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -38,10 +52,10 @@
 /* Begin PBXGroup section */
 		D10000000000000000000001 = {isa = PBXGroup; children = (D10000000000000000000002 /* MusicPlayer */, D10000000000000000000007 /* Products */); sourceTree = "<group>"; };
 		D10000000000000000000002 /* MusicPlayer */ = {isa = PBXGroup; children = (B10000000000000000000001 /* MusicPlayerApp.swift */, D10000000000000000000003 /* Models */, D10000000000000000000004 /* Services */, D10000000000000000000005 /* Player */, D10000000000000000000006 /* Views */, B1000000000000000000000A /* Info.plist */); path = MusicPlayer; sourceTree = "<group>"; };
-		D10000000000000000000003 /* Models */ = {isa = PBXGroup; children = (B10000000000000000000002 /* Track.swift */); path = Models; sourceTree = "<group>"; };
-		D10000000000000000000004 /* Services */ = {isa = PBXGroup; children = (B10000000000000000000003 /* LocalMusicLibrary.swift */); path = Services; sourceTree = "<group>"; };
+		D10000000000000000000003 /* Models */ = {isa = PBXGroup; children = (B10000000000000000000002 /* Track.swift */, B1000000000000000000000C /* Playlist.swift */); path = Models; sourceTree = "<group>"; };
+		D10000000000000000000004 /* Services */ = {isa = PBXGroup; children = (B10000000000000000000003 /* LocalMusicLibrary.swift */, B1000000000000000000000D /* MusicDataStore.swift */, B1000000000000000000000E /* AppSettings.swift */); path = Services; sourceTree = "<group>"; };
 		D10000000000000000000005 /* Player */ = {isa = PBXGroup; children = (B10000000000000000000004 /* MusicPlayerViewModel.swift */); path = Player; sourceTree = "<group>"; };
-		D10000000000000000000006 /* Views */ = {isa = PBXGroup; children = (B10000000000000000000005 /* DocumentPicker.swift */, B10000000000000000000006 /* ArtworkView.swift */, B10000000000000000000007 /* MiniPlayerView.swift */, B10000000000000000000008 /* NowPlayingView.swift */, B10000000000000000000009 /* LibraryView.swift */); path = Views; sourceTree = "<group>"; };
+		D10000000000000000000006 /* Views */ = {isa = PBXGroup; children = (B10000000000000000000005 /* DocumentPicker.swift */, B10000000000000000000006 /* ArtworkView.swift */, B10000000000000000000007 /* MiniPlayerView.swift */, B10000000000000000000008 /* NowPlayingView.swift */, B10000000000000000000009 /* LibraryView.swift */, B1000000000000000000000F /* GlassComponents.swift */, B10000000000000000000010 /* FeatureViews.swift */, B10000000000000000000011 /* SettingsView.swift */, B10000000000000000000012 /* RootView.swift */); path = Views; sourceTree = "<group>"; };
 		D10000000000000000000007 /* Products */ = {isa = PBXGroup; children = (B1000000000000000000000B /* Local Music.app */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -58,7 +72,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		C10000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* MusicPlayerApp.swift in Sources */, A10000000000000000000002 /* Track.swift in Sources */, A10000000000000000000003 /* LocalMusicLibrary.swift in Sources */, A10000000000000000000004 /* MusicPlayerViewModel.swift in Sources */, A10000000000000000000005 /* DocumentPicker.swift in Sources */, A10000000000000000000006 /* ArtworkView.swift in Sources */, A10000000000000000000007 /* MiniPlayerView.swift in Sources */, A10000000000000000000008 /* NowPlayingView.swift in Sources */, A10000000000000000000009 /* LibraryView.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* MusicPlayerApp.swift in Sources */, A10000000000000000000002 /* Track.swift in Sources */, A10000000000000000000003 /* LocalMusicLibrary.swift in Sources */, A10000000000000000000004 /* MusicPlayerViewModel.swift in Sources */, A10000000000000000000005 /* DocumentPicker.swift in Sources */, A10000000000000000000006 /* ArtworkView.swift in Sources */, A10000000000000000000007 /* MiniPlayerView.swift in Sources */, A10000000000000000000008 /* NowPlayingView.swift in Sources */, A10000000000000000000009 /* LibraryView.swift in Sources */, A1000000000000000000000A /* Playlist.swift in Sources */, A1000000000000000000000B /* MusicDataStore.swift in Sources */, A1000000000000000000000C /* AppSettings.swift in Sources */, A1000000000000000000000D /* GlassComponents.swift in Sources */, A1000000000000000000000E /* FeatureViews.swift in Sources */, A1000000000000000000000F /* SettingsView.swift in Sources */, A10000000000000000000010 /* RootView.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

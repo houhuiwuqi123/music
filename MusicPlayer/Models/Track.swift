@@ -7,6 +7,7 @@ struct Track: Identifiable, Codable, Hashable {
     var albumName: String
     var duration: TimeInterval
     var fileURL: URL
+    var artworkData: Data?
 
     init(
         id: UUID = UUID(),
@@ -14,7 +15,8 @@ struct Track: Identifiable, Codable, Hashable {
         artist: String = "Unknown Artist",
         albumName: String = "Unknown Album",
         duration: TimeInterval,
-        fileURL: URL
+        fileURL: URL,
+        artworkData: Data? = nil
     ) {
         self.id = id
         self.title = title
@@ -22,6 +24,7 @@ struct Track: Identifiable, Codable, Hashable {
         self.albumName = albumName
         self.duration = duration
         self.fileURL = fileURL
+        self.artworkData = artworkData
     }
 }
 

@@ -39,7 +39,9 @@ struct MiniPlayerView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.12)) }
+                .shadow(color: .black.opacity(0.4), radius: 20, y: 8)
                 .overlay(alignment: .bottomLeading) {
                     GeometryReader { proxy in
                         Capsule()

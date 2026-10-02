@@ -4,13 +4,17 @@ import SwiftUI
 struct MusicPlayerApp: App {
     @StateObject private var library = LocalMusicLibrary()
     @StateObject private var player = MusicPlayerViewModel()
+    @StateObject private var dataStore = MusicDataStore()
+    @StateObject private var settings = AppSettings()
 
     var body: some Scene {
         WindowGroup {
-            LibraryView()
+            RootView()
                 .environmentObject(library)
                 .environmentObject(player)
-                .preferredColorScheme(nil)
+                .environmentObject(dataStore)
+                .environmentObject(settings)
+                .preferredColorScheme(.dark)
         }
     }
 }

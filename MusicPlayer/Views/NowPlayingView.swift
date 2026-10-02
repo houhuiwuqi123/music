@@ -9,12 +9,7 @@ struct NowPlayingView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                LinearGradient(
-                    colors: [Color.indigo.opacity(0.22), Color(.systemBackground)],
-                    startPoint: .top,
-                    endPoint: .center
-                )
-                .ignoresSafeArea()
+                DarkBackground()
 
                 VStack(spacing: 26) {
                     Spacer(minLength: 8)
@@ -90,15 +85,22 @@ struct NowPlayingView: View {
                     }
                     .buttonStyle(.plain)
 
-                    Button {
-                        player.repeatMode = player.repeatMode == .list ? .one : .list
-                    } label: {
-                        Label(player.repeatMode.rawValue, systemImage: player.repeatMode.icon)
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 9)
-                            .background(.thinMaterial, in: Capsule())
+                    HStack(spacing: 12) {
+                        Button(action: player.toggleShuffle) {
+                            Label("Shuffle", systemImage: "shuffle")
+                                .foregroundStyle(player.shuffleEnabled ? Color.purple : Color.primary)
+                        }
+                        Button {
+                            player.repeatMode = player.repeatMode == .list ? .one : .list
+                        } label: {
+                            Label(player.repeatMode.rawValue, systemImage: player.repeatMode.icon)
+                                .foregroundStyle(player.repeatMode == .one ? Color.purple : Color.primary)
+                        }
                     }
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 11)
+                    .background(.thinMaterial, in: Capsule())
                     .buttonStyle(.plain)
 
                     Spacer(minLength: 14)

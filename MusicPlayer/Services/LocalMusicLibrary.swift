@@ -1,24 +1,58 @@
 import AVFoundation
+import Combine
 import Foundation
 import UniformTypeIdentifiers
 
 @MainActor
 final class LocalMusicLibrary: ObservableObject {
     @Published private(set) var tracks: [Track] = []
+    @Published private(set) var videos: [LocalVideo] = []
     @Published var importError: String?
 
-    static let supportedTypes: [UTType] = [
-        UTType.mp3,
-        UTType.mpeg4Audio,
-        UTType.wav
-    ]
+    static let supportedTypes: [UTType] = [.audio, .movie]
 
     private let fileManager = FileManager.default
     private let indexFileName = "music-library.json"
+    private let videoIndexFileName = "video-library.json"
     private let audioFolderName = "Imported Music"
 
     init() {
         loadLibrary()
+    }
+
+    func refreshDocuments() async {
+        importError = nil
+        do {
+            let documents = try documentsURL()
+            _ = try audioFolderURL()
+            let discovered = fileManager.enumerator(
+                at: documents,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            )?
+            .compactMap { $0 as? URL }
+            .filter(Self.isSupported) ?? []
+
+            let uniqueURLs = Dictionary(grouping: discovered, by: { $0.standardizedFileURL.path })
+                .compactMap { $0.value.first }
+            let knownPaths = Set((tracks.map(\.fileURL) + videos.map(\.fileURL)).map { $0.standardizedFileURL.path })
+            let newURLs = uniqueURLs.filter { !knownPaths.contains($0.standardizedFileURL.path) }
+
+            for url in newURLs {
+                if Self.isVideo(url) {
+                    videos.append(try await makeVideo(from: url))
+                } else {
+                    tracks.append(try await makeTrack(from: url))
+                }
+            }
+            tracks.removeAll { !fileManager.fileExists(atPath: $0.fileURL.path) }
+            videos.removeAll { !fileManager.fileExists(atPath: $0.fileURL.path) }
+            tracks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            videos.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            saveLibrary()
+        } catch {
+            importError = error.localizedDescription
+        }
     }
 
     func importFiles(from urls: [URL]) async {
@@ -27,23 +61,51 @@ final class LocalMusicLibrary: ObservableObject {
         do {
             let folder = try audioFolderURL()
             var imported: [Track] = []
+            var importedVideos: [LocalVideo] = []
+            var failures: [String] = []
 
             for sourceURL in urls where Self.isSupported(sourceURL) {
-                let hasAccess = sourceURL.startAccessingSecurityScopedResource()
-                defer {
-                    if hasAccess { sourceURL.stopAccessingSecurityScopedResource() }
+                do {
+                    let result = try await importFile(sourceURL, into: folder)
+                    switch result {
+                    case .audio(let track): imported.append(track)
+                    case .video(let video): importedVideos.append(video)
+                    }
+                } catch {
+                    failures.append(sourceURL.lastPathComponent)
                 }
-
-                let destination = uniqueDestination(for: sourceURL, in: folder)
-                try fileManager.copyItem(at: sourceURL, to: destination)
-                imported.append(try await makeTrack(from: destination))
             }
 
             tracks.append(contentsOf: imported)
+            videos.append(contentsOf: importedVideos)
             tracks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            videos.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
             saveLibrary()
+            if !failures.isEmpty { importError = "Unable to import: \(failures.joined(separator: ", "))" }
         } catch {
             importError = error.localizedDescription
+        }
+    }
+
+    private enum ImportedMedia {
+        case audio(Track)
+        case video(LocalVideo)
+    }
+
+    private func importFile(_ sourceURL: URL, into folder: URL) async throws -> ImportedMedia {
+        let hasAccess = sourceURL.startAccessingSecurityScopedResource()
+        defer { if hasAccess { sourceURL.stopAccessingSecurityScopedResource() } }
+
+        let destination = uniqueDestination(for: sourceURL, in: folder)
+        do {
+            try fileManager.copyItem(at: sourceURL, to: destination)
+            if Self.isVideo(destination) {
+                return .video(try await makeVideo(from: destination))
+            }
+            return .audio(try await makeTrack(from: destination))
+        } catch {
+            try? fileManager.removeItem(at: destination)
+            throw error
         }
     }
 
@@ -57,6 +119,13 @@ final class LocalMusicLibrary: ObservableObject {
         saveLibrary()
     }
 
+    func removeTrack(id: UUID) {
+        guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
+        try? fileManager.removeItem(at: tracks[index].fileURL)
+        tracks.remove(at: index)
+        saveLibrary()
+    }
+
     private func makeTrack(from url: URL) async throws -> Track {
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
@@ -66,11 +135,27 @@ final class LocalMusicLibrary: ObservableObject {
             ?? url.deletingPathExtension().lastPathComponent
         let artist = await metadata.text(for: .commonIdentifierArtist) ?? "Unknown Artist"
         let album = await metadata.text(for: .commonIdentifierAlbumName) ?? "Unknown Album"
+        let artworkData = await metadata.data(for: .commonIdentifierArtwork)
 
         return Track(
             title: title,
             artist: artist,
             albumName: album,
+            duration: duration.isFinite ? duration : 0,
+            fileURL: url,
+            artworkData: artworkData
+        )
+    }
+
+    private func makeVideo(from url: URL) async throws -> LocalVideo {
+        let asset = AVURLAsset(url: url)
+        let duration = try await asset.load(.duration).seconds
+        let metadata = try await asset.load(.commonMetadata)
+        let title = await metadata.text(for: .commonIdentifierTitle) ?? url.deletingPathExtension().lastPathComponent
+        let artist = await metadata.text(for: .commonIdentifierArtist) ?? "Unknown Artist"
+        return LocalVideo(
+            title: title,
+            artist: artist,
             duration: duration.isFinite ? duration : 0,
             fileURL: url
         )
@@ -84,12 +169,18 @@ final class LocalMusicLibrary: ObservableObject {
         } catch {
             tracks = []
         }
+        if let data = try? Data(contentsOf: try videoIndexURL()),
+           let decoded = try? JSONDecoder().decode([LocalVideo].self, from: data) {
+            videos = decoded.filter { fileManager.fileExists(atPath: $0.fileURL.path) }
+        }
     }
 
     private func saveLibrary() {
         do {
             let data = try JSONEncoder().encode(tracks)
             try data.write(to: indexURL(), options: .atomic)
+            let videoData = try JSONEncoder().encode(videos)
+            try videoData.write(to: videoIndexURL(), options: .atomic)
         } catch {
             importError = error.localizedDescription
         }
@@ -116,13 +207,25 @@ final class LocalMusicLibrary: ObservableObject {
         try documentsURL().appendingPathComponent(indexFileName)
     }
 
+    private func videoIndexURL() throws -> URL {
+        try documentsURL().appendingPathComponent(videoIndexFileName)
+    }
+
     private func uniqueDestination(for source: URL, in folder: URL) -> URL {
         let ext = source.pathExtension.lowercased()
         return folder.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
     }
 
     private static func isSupported(_ url: URL) -> Bool {
-        ["mp3", "m4a", "wav"].contains(url.pathExtension.lowercased())
+        isAudio(url) || isVideo(url)
+    }
+
+    private static func isAudio(_ url: URL) -> Bool {
+        ["mp3", "m4a", "wav", "aac", "aif", "aiff", "caf", "flac"].contains(url.pathExtension.lowercased())
+    }
+
+    private static func isVideo(_ url: URL) -> Bool {
+        ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased())
     }
 }
 
@@ -132,5 +235,12 @@ private extension Array where Element == AVMetadataItem {
             return nil
         }
         return try? await item.load(.stringValue)
+    }
+
+    func data(for identifier: AVMetadataIdentifier) async -> Data? {
+        guard let item = AVMetadataItem.metadataItems(from: self, filteredByIdentifier: identifier).first else {
+            return nil
+        }
+        return try? await item.load(.dataValue)
     }
 }

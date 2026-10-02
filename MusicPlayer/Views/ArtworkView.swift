@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ArtworkView: View {
     let track: Track?
@@ -6,28 +7,26 @@ struct ArtworkView: View {
     var cornerRadius: CGFloat = 12
 
     private var colors: [Color] {
-        let seed = abs((track?.title ?? "Music").hashValue)
+        let seed = UInt(bitPattern: (track?.title ?? "Music").hashValue)
         let palettes: [[Color]] = [
             [.indigo, .purple],
             [.blue, .cyan],
             [.orange, .pink],
             [.mint, .teal]
         ]
-        return palettes[seed % palettes.count]
+        return palettes[Int(seed % UInt(palettes.count))]
     }
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
-            Circle()
-                .fill(.black.opacity(0.18))
-                .frame(width: size * 0.62)
-            Circle()
-                .stroke(.white.opacity(0.32), lineWidth: max(1, size * 0.025))
-                .frame(width: size * 0.43)
-            Image(systemName: "music.note")
-                .font(.system(size: size * 0.2, weight: .semibold))
-                .foregroundStyle(.white)
+            if let data = track?.artworkData, let image = UIImage(data: data) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                Circle().fill(.black.opacity(0.18)).frame(width: size * 0.62)
+                Circle().stroke(.white.opacity(0.32), lineWidth: max(1, size * 0.025)).frame(width: size * 0.43)
+                Image(systemName: "music.note").font(.system(size: size * 0.2, weight: .semibold)).foregroundStyle(.white)
+            }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
