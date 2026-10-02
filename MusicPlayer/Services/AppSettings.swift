@@ -58,7 +58,11 @@ final class AppSettings: ObservableObject {
             "playNext": ("下一首播放", "Play Next"), "rename": ("修改名称", "Rename"),
             "songName": ("歌曲名称", "Song Name"), "save": ("保存", "Save"),
             "lyrics": ("歌词", "Lyrics"), "noLyrics": ("暂无歌词", "No Lyrics"),
-            "uploadLyrics": ("上传歌词", "Upload Lyrics")
+            "uploadLyrics": ("上传歌词", "Upload Lyrics"),
+            "deleteSongTitle": ("如何删除这首歌曲？", "How would you like to remove this song?"),
+            "removeFromLibrary": ("仅从音乐库移除", "Remove from Library Only"),
+            "deleteLocalFile": ("删除本地文件", "Delete Local File"),
+            "deleteLocalMessage": ("删除本地文件后无法恢复；仅从音乐库移除会保留设备中的文件。", "Deleting the local file cannot be undone. Removing it from the library keeps the file on this device.")
         ]
         guard let value = translations[key] else { return key }
         return language == .chinese ? value.zh : value.en

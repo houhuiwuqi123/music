@@ -74,6 +74,7 @@ struct SongsView: View {
     @EnvironmentObject private var settings: AppSettings
     @State private var navigationPath: [Track] = []
     @State private var renamingTrack: Track?
+    @State private var deletingTrack: Track?
     @State private var editedName = ""
 
     var body: some View {
@@ -110,7 +111,7 @@ struct SongsView: View {
                                             Label(settings.text("rename"), systemImage: "pencil")
                                         }
                                         Button(role: .destructive) {
-                                            deleteTrack(track)
+                                            deletingTrack = track
                                         } label: {
                                             Label(settings.text("delete"), systemImage: "trash")
                                         }
@@ -137,12 +138,25 @@ struct SongsView: View {
                     renamingTrack = nil
                 }
             }
+            .confirmationDialog(
+                settings.text("deleteSongTitle"),
+                isPresented: Binding(get: { deletingTrack != nil }, set: { if !$0 { deletingTrack = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button(settings.text("removeFromLibrary")) { deletePendingTrack(deleteFile: false) }
+                Button(settings.text("deleteLocalFile"), role: .destructive) { deletePendingTrack(deleteFile: true) }
+                Button(settings.text("cancel"), role: .cancel) { deletingTrack = nil }
+            } message: {
+                Text(settings.text("deleteLocalMessage"))
+            }
         }
     }
 
-    private func deleteTrack(_ track: Track) {
-        library.removeTrack(id: track.id)
+    private func deletePendingTrack(deleteFile: Bool) {
+        guard let track = deletingTrack else { return }
+        library.removeTrack(id: track.id, deleteFile: deleteFile)
         dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)))
+        deletingTrack = nil
     }
 }
 
@@ -155,6 +169,7 @@ struct TrackDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showsCoverImporter = false
     @State private var showsLyricsImporter = false
+    @State private var showsDeleteOptions = false
 
     private var track: Track? { library.tracks.first(where: { $0.id == trackID }) }
 
@@ -219,9 +234,7 @@ struct TrackDetailView: View {
                     }
 
                     Button(role: .destructive) {
-                        library.removeTrack(id: track.id)
-                        dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)))
-                        dismiss()
+                        showsDeleteOptions = true
                     } label: {
                         Label(settings.text("delete"), systemImage: "trash").frame(maxWidth: .infinity)
                     }
@@ -250,6 +263,23 @@ struct TrackDetailView: View {
                 library.importError = error.localizedDescription
             }
         }
+        .confirmationDialog(
+            settings.text("deleteSongTitle"),
+            isPresented: $showsDeleteOptions,
+            titleVisibility: .visible
+        ) {
+            Button(settings.text("removeFromLibrary")) { removeTrack(deleteFile: false) }
+            Button(settings.text("deleteLocalFile"), role: .destructive) { removeTrack(deleteFile: true) }
+            Button(settings.text("cancel"), role: .cancel) {}
+        } message: {
+            Text(settings.text("deleteLocalMessage"))
+        }
+    }
+
+    private func removeTrack(deleteFile: Bool) {
+        library.removeTrack(id: trackID, deleteFile: deleteFile)
+        dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)))
+        dismiss()
     }
 }
 
@@ -377,14 +407,17 @@ struct PlaylistsView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(dataStore.playlists) { playlist in
                         NavigationLink(value: playlist.id) {
+                            let playlistTracks = dataStore.tracks(in: playlist, library: library.tracks)
                             HStack(spacing: 14) {
-                                ArtworkView(track: dataStore.tracks(in: playlist, library: library.tracks).first, artworkData: playlist.artworkData, size: 50, cornerRadius: 14)
+                                ArtworkView(track: playlistTracks.first, artworkData: playlist.artworkData, size: 50, cornerRadius: 14)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(playlist.name).font(.headline)
-                                    Text("\(playlist.trackIDs.count) \(settings.text("tracks"))").font(.caption).foregroundStyle(.secondary)
+                                    Text("\(playlistTracks.count) \(settings.text("tracks"))").font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                                Image(systemName: "chevron.right")
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 9)

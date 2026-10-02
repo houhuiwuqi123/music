@@ -26,10 +26,14 @@ final class LocalMusicLibrary: ObservableObject {
     private let fileManager = FileManager.default
     private let indexFileName = "music-library.json"
     private let videoIndexFileName = "video-library.json"
+    private let hiddenTracksFileName = "hidden-tracks.json"
     private let audioFolderName = "Imported Music"
+    private var hiddenTrackPaths: Set<String> = []
 
     init() {
+        loadHiddenTrackPaths()
         loadLibrary()
+        deduplicateTracks()
     }
 
     func refreshDocuments() async {
@@ -43,7 +47,7 @@ final class LocalMusicLibrary: ObservableObject {
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             )?
             .compactMap { $0 as? URL }
-            .filter(Self.isSupported) ?? []
+            .filter { Self.isSupported($0) && !hiddenTrackPaths.contains($0.standardizedFileURL.path) } ?? []
 
             let uniqueURLs = Dictionary(grouping: discovered, by: { $0.standardizedFileURL.path })
                 .compactMap { $0.value.first }
@@ -56,7 +60,8 @@ final class LocalMusicLibrary: ObservableObject {
                     if Self.isVideo(url) {
                         videos.append(try await makeVideo(from: url))
                     } else {
-                        tracks.append(try await makeTrack(from: url))
+                        let track = try await makeTrack(from: url)
+                        if !containsDuplicate(of: track, in: tracks) { tracks.append(track) }
                     }
                 } catch {
                     failures.append(url.lastPathComponent)
@@ -93,7 +98,12 @@ final class LocalMusicLibrary: ObservableObject {
                 do {
                     let result = try await importFile(sourceURL, into: folder)
                     switch result {
-                    case .audio(let track): imported.append(track)
+                    case .audio(let track):
+                        if containsDuplicate(of: track, in: tracks + imported) {
+                            try? fileManager.removeItem(at: track.fileURL)
+                        } else {
+                            imported.append(track)
+                        }
                     case .video(let video): importedVideos.append(video)
                     }
                 } catch {
@@ -161,10 +171,17 @@ final class LocalMusicLibrary: ObservableObject {
         saveLibrary()
     }
 
-    func removeTrack(id: UUID) {
+    func removeTrack(id: UUID, deleteFile: Bool = true) {
         guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
-        try? fileManager.removeItem(at: tracks[index].fileURL)
+        let path = tracks[index].fileURL.standardizedFileURL.path
+        if deleteFile {
+            try? fileManager.removeItem(at: tracks[index].fileURL)
+            hiddenTrackPaths.remove(path)
+        } else {
+            hiddenTrackPaths.insert(path)
+        }
         tracks.remove(at: index)
+        saveHiddenTrackPaths()
         saveLibrary()
     }
 
@@ -245,7 +262,10 @@ final class LocalMusicLibrary: ObservableObject {
         do {
             let data = try Data(contentsOf: try indexURL())
             let decoded = try JSONDecoder().decode([Track].self, from: data)
-            tracks = decoded.filter { fileManager.fileExists(atPath: $0.fileURL.path) }
+            tracks = decoded.filter {
+                fileManager.fileExists(atPath: $0.fileURL.path)
+                    && !hiddenTrackPaths.contains($0.fileURL.standardizedFileURL.path)
+            }
         } catch {
             tracks = []
         }
@@ -264,6 +284,38 @@ final class LocalMusicLibrary: ObservableObject {
         } catch {
             importError = error.localizedDescription
         }
+    }
+
+    private func loadHiddenTrackPaths() {
+        guard let data = try? Data(contentsOf: try hiddenTracksURL()),
+              let paths = try? JSONDecoder().decode(Set<String>.self, from: data) else { return }
+        hiddenTrackPaths = paths
+    }
+
+    private func saveHiddenTrackPaths() {
+        guard let data = try? JSONEncoder().encode(hiddenTrackPaths) else { return }
+        try? data.write(to: hiddenTracksURL(), options: .atomic)
+    }
+
+    private func deduplicateTracks() {
+        var signatures = Set<String>()
+        tracks = tracks.filter { signatures.insert(duplicateSignature(for: $0)).inserted }
+        tracks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        saveLibrary()
+    }
+
+    private func containsDuplicate(of track: Track, in collection: [Track]) -> Bool {
+        let signature = duplicateSignature(for: track)
+        return collection.contains { duplicateSignature(for: $0) == signature }
+    }
+
+    private func duplicateSignature(for track: Track) -> String {
+        let values = [track.title, track.artist, track.albumName].map {
+            $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+        }
+        return values.joined(separator: "|") + "|\(Int(track.duration.rounded()))"
     }
 
     private func documentsURL() throws -> URL {
@@ -289,6 +341,10 @@ final class LocalMusicLibrary: ObservableObject {
 
     private func videoIndexURL() throws -> URL {
         try documentsURL().appendingPathComponent(videoIndexFileName)
+    }
+
+    private func hiddenTracksURL() throws -> URL {
+        try documentsURL().appendingPathComponent(hiddenTracksFileName)
     }
 
     private func uniqueDestination(for source: URL, in folder: URL) -> URL {

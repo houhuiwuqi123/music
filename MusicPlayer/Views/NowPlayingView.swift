@@ -73,7 +73,13 @@ struct NowPlayingView: View {
                     }
                     .padding(.horizontal, 26)
 
-                    HStack(spacing: 42) {
+                    HStack(spacing: 16) {
+                        Button(action: player.toggleShuffle) {
+                            Image(systemName: "shuffle")
+                                .foregroundStyle(player.shuffleEnabled ? Color.purple : Color.primary)
+                                .frame(width: 44, height: 48)
+                        }
+
                         Button(action: player.previous) {
                             Image(systemName: "backward.fill")
                                 .font(.title2)
@@ -82,10 +88,8 @@ struct NowPlayingView: View {
 
                         Button(action: player.togglePlayback) {
                             Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 30, weight: .bold))
-                                .frame(width: 72, height: 72)
-                                .background(.primary, in: Circle())
-                                .foregroundStyle(Color(.systemBackground))
+                                .font(.title2)
+                                .frame(width: 48, height: 48)
                         }
 
                         Button(action: player.next) {
@@ -93,25 +97,15 @@ struct NowPlayingView: View {
                                 .font(.title2)
                                 .frame(width: 48, height: 48)
                         }
-                    }
-                    .buttonStyle(.plain)
 
-                    HStack(spacing: 12) {
-                        Button(action: player.toggleShuffle) {
-                            Label("Shuffle", systemImage: "shuffle")
-                                .foregroundStyle(player.shuffleEnabled ? Color.purple : Color.primary)
-                        }
                         Button {
                             player.repeatMode = player.repeatMode == .list ? .one : .list
                         } label: {
-                            Label(player.repeatMode.rawValue, systemImage: player.repeatMode.icon)
+                            Image(systemName: player.repeatMode.icon)
                                 .foregroundStyle(player.repeatMode == .one ? Color.purple : Color.primary)
+                                .frame(width: 44, height: 48)
                         }
                     }
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 11)
-                    .background(.thinMaterial, in: Capsule())
                     .buttonStyle(.plain)
 
                     Spacer(minLength: 14)
