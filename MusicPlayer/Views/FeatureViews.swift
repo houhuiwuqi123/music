@@ -119,7 +119,7 @@ struct SongsView: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
                             .glassCard(cornerRadius: 18)
-                            .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                            .listRowInsets(EdgeInsets(top: 0.5, leading: 14, bottom: 0.5, trailing: 14))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -290,18 +290,18 @@ struct ArtistsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
+    @State private var navigationPath: [Artist] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             let artists = dataStore.artists(from: library.tracks, videos: library.videos)
             Group {
                 if artists.isEmpty {
                     Color.clear
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
+                    List {
                             ForEach(artists) { artist in
-                                NavigationLink(value: artist) {
+                                Button { navigationPath.append(artist) } label: {
                                     HStack(spacing: 14) {
                                         ArtworkView(track: artist.tracks.first, size: 50, cornerRadius: 14)
                                         VStack(alignment: .leading, spacing: 5) {
@@ -309,20 +309,20 @@ struct ArtistsView: View {
                                             Text("\(artist.tracks.count) \(settings.text("tracks")) · \(artist.videos.count) \(settings.text("videos"))").font(.caption).foregroundStyle(.secondary)
                                         }
                                         Spacer()
-                                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                                     }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 9)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .glassCard(cornerRadius: 18)
                                 }
                                 .buttonStyle(.plain)
-                                Divider().opacity(0.12).padding(.leading, 80)
+                                .listRowInsets(EdgeInsets(top: 0.5, leading: 14, bottom: 0.5, trailing: 14))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
                             }
-                        }
-                        .padding(.vertical, 8)
-                        .glassCard()
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 180)
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 160) }
                 }
             }
             .navigationDestination(for: Artist.self) { ArtistDetailView(artist: $0) }
@@ -411,16 +411,17 @@ struct PlaylistsView: View {
     @State private var showsCreate = false
     @State private var playlistName = ""
     @State private var deletingPlaylist: Playlist?
+    @State private var navigationPath: [UUID] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             Group {
                 if dataStore.playlists.isEmpty {
                     Color.clear
                 } else {
                     List {
                     ForEach(dataStore.playlists) { playlist in
-                        NavigationLink(value: playlist.id) {
+                        Button { navigationPath.append(playlist.id) } label: {
                             let playlistTracks = dataStore.tracks(in: playlist, library: library.tracks)
                             HStack(spacing: 14) {
                                 ArtworkView(track: playlistTracks.first, artworkData: playlist.artworkData, size: 50, cornerRadius: 14)
@@ -429,16 +430,13 @@ struct PlaylistsView: View {
                                     Text("\(playlistTracks.count) \(settings.text("tracks"))").font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.body.weight(.semibold))
-                                    .foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
                             .glassCard(cornerRadius: 18)
                         }
                         .buttonStyle(.plain)
-                        .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                        .listRowInsets(EdgeInsets(top: 0.5, leading: 14, bottom: 0.5, trailing: 14))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -508,6 +506,9 @@ struct PlaylistDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showsCoverImporter = false
     @State private var showsSongManager = false
+    @State private var showsRename = false
+    @State private var showsDeleteOptions = false
+    @State private var editedPlaylistName = ""
 
     var playlist: Playlist? { dataStore.playlists.first(where: { $0.id == playlistID }) }
     var tracks: [Track] { playlist.map { dataStore.tracks(in: $0, library: library.tracks) } ?? [] }
@@ -562,17 +563,53 @@ struct PlaylistDetailView: View {
         .sheet(isPresented: $showsSongManager) {
             ManagePlaylistSongsView(playlistID: playlistID)
         }
+        .sheet(isPresented: $showsRename) {
+            RenamePlaylistSheet(name: $editedPlaylistName) {
+                dataStore.renamePlaylist(id: playlistID, to: editedPlaylistName)
+                showsRename = false
+            }
+        }
+        .confirmationDialog(
+            settings.text("deletePlaylistTitle"),
+            isPresented: $showsDeleteOptions,
+            titleVisibility: .visible
+        ) {
+            Button(settings.text("playlistOnly")) { deletePlaylist(songAction: .keep) }
+            Button(settings.text("playlistAndLibrary"), role: .destructive) { deletePlaylist(songAction: .removeFromLibrary) }
+            Button(settings.text("playlistAndFiles"), role: .destructive) { deletePlaylist(songAction: .deleteFiles) }
+            Button(settings.text("cancel"), role: .cancel) {}
+        } message: {
+            Text(settings.text("deletePlaylistMessage"))
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { showsSongManager = true } label: { Image(systemName: "plus") }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button(role: .destructive) {
-                    dataStore.deletePlaylist(id: playlistID)
-                    dismiss()
-                } label: { Image(systemName: "trash") }
+                Menu {
+                    Button {
+                        editedPlaylistName = playlist?.name ?? ""
+                        showsRename = true
+                    } label: { Label(settings.text("renamePlaylist"), systemImage: "pencil") }
+                    Button(role: .destructive) { showsDeleteOptions = true } label: {
+                        Label(settings.text("deletePlaylist"), systemImage: "trash")
+                    }
+                } label: { Image(systemName: "ellipsis.circle") }
             }
         }
+    }
+
+    private enum DetailPlaylistSongAction: Equatable { case keep, removeFromLibrary, deleteFiles }
+
+    private func deletePlaylist(songAction: DetailPlaylistSongAction) {
+        if songAction != .keep {
+            for track in tracks {
+                library.removeTrack(id: track.id, deleteFile: songAction == .deleteFiles)
+            }
+            dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)))
+        }
+        dataStore.deletePlaylist(id: playlistID)
+        dismiss()
     }
 }
 
@@ -616,6 +653,33 @@ private struct RenameTrackSheet: View {
         VStack(spacing: 20) {
             Text(settings.text("rename")).font(.title2.bold()).foregroundStyle(.black)
             TextField(settings.text("songName"), text: $name)
+                .foregroundStyle(.black).tint(.purple).padding(14)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
+                .overlay { RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.15)) }
+            HStack {
+                Button(settings.text("cancel")) { dismiss() }.foregroundStyle(.secondary)
+                Spacer()
+                Button(settings.text("save"), action: onSave)
+                    .buttonStyle(.borderedProminent).tint(.purple)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .background(Color(white: 0.94).ignoresSafeArea())
+        .presentationDetents([.height(230)])
+    }
+}
+
+private struct RenamePlaylistSheet: View {
+    @Binding var name: String
+    let onSave: () -> Void
+    @EnvironmentObject private var settings: AppSettings
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text(settings.text("renamePlaylist")).font(.title2.bold()).foregroundStyle(.black)
+            TextField(settings.text("playlistName"), text: $name)
                 .foregroundStyle(.black).tint(.purple).padding(14)
                 .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
                 .overlay { RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.15)) }

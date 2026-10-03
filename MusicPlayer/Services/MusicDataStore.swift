@@ -32,6 +32,14 @@ final class MusicDataStore: ObservableObject {
         save(playlists, file: playlistsFile)
     }
 
+    func renamePlaylist(id: UUID, to name: String) {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, let index = playlists.firstIndex(where: { $0.id == id }) else { return }
+        playlists[index].name = cleaned
+        playlists[index].updatedAt = Date()
+        save(playlists, file: playlistsFile)
+    }
+
     func add(_ trackID: UUID, to playlistID: UUID) {
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         if !playlists[index].trackIDs.contains(trackID) {
