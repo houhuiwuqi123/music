@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import Foundation
 import UniformTypeIdentifiers
+import UIKit
 
 @MainActor
 final class LocalMusicLibrary: ObservableObject {
@@ -189,6 +190,21 @@ final class LocalMusicLibrary: ObservableObject {
         guard let index = tracks.firstIndex(where: { $0.id == trackID }) else { return }
         tracks[index].artworkData = artworkData
         saveLibrary()
+    }
+
+    func importArtwork(from url: URL, for trackID: UUID) throws {
+        let sourceData = try readSecurityScopedData(from: url)
+        guard let image = UIImage(data: sourceData) else { throw CocoaError(.fileReadCorruptFile) }
+
+        let maxDimension: CGFloat = 1600
+        let scale = min(1, maxDimension / max(image.size.width, image.size.height))
+        let targetSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        let normalizedImage = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: targetSize)) }
+        guard let normalizedData = normalizedImage.jpegData(compressionQuality: 0.9) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        updateArtwork(normalizedData, for: trackID)
     }
 
     func renameTrack(id: UUID, to name: String) {

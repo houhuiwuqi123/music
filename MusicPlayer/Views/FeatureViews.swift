@@ -164,14 +164,16 @@ struct SongsView: View {
 }
 
 struct TrackDetailView: View {
+    private enum ImportKind { case cover, lyrics }
+
     let trackID: UUID
     @EnvironmentObject private var library: LocalMusicLibrary
     @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
-    @State private var showsCoverImporter = false
-    @State private var showsLyricsImporter = false
+    @State private var showsImporter = false
+    @State private var importKind: ImportKind = .cover
     @State private var showsDeleteOptions = false
     @State private var showsInfoEditor = false
     @State private var editedTitle = ""
@@ -183,7 +185,7 @@ struct TrackDetailView: View {
         ScrollView {
             if let track {
                 VStack(spacing: 22) {
-                    Button { showsCoverImporter = true } label: {
+                    Button { importKind = .cover; showsImporter = true } label: {
                         ZStack(alignment: .bottom) {
                             ArtworkView(track: track, size: 238, cornerRadius: 38)
                             Label(settings.text("changeCover"), systemImage: "photo.badge.plus")
@@ -212,7 +214,7 @@ struct TrackDetailView: View {
                     }
                     .buttonStyle(.borderedProminent).tint(.purple)
 
-                    Button { showsLyricsImporter = true } label: {
+                    Button { importKind = .lyrics; showsImporter = true } label: {
                         Label(settings.text("uploadLyrics"), systemImage: "text.quote").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -260,20 +262,17 @@ struct TrackDetailView: View {
         }
         .navigationTitle(settings.text("details"))
         .navigationBarTitleDisplayMode(.inline)
-        .fileImporter(isPresented: $showsCoverImporter, allowedContentTypes: [.image]) { result in
+        .fileImporter(isPresented: $showsImporter, allowedContentTypes: importKind == .cover ? [.image] : [.plainText]) { result in
             guard case .success(let url) = result else { return }
             do {
-                library.updateArtwork(try library.readSecurityScopedData(from: url), for: trackID)
-            } catch {
-                library.importError = error.localizedDescription
-            }
-        }
-        .fileImporter(isPresented: $showsLyricsImporter, allowedContentTypes: [.plainText]) { result in
-            guard case .success(let url) = result else { return }
-            do {
-                let data = try library.readSecurityScopedData(from: url)
-                guard let lyrics = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
-                library.updateLyrics(lyrics, for: trackID)
+                switch importKind {
+                case .cover:
+                    try library.importArtwork(from: url, for: trackID)
+                case .lyrics:
+                    let data = try library.readSecurityScopedData(from: url)
+                    guard let lyrics = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
+                    library.updateLyrics(lyrics, for: trackID)
+                }
             } catch {
                 library.importError = error.localizedDescription
             }

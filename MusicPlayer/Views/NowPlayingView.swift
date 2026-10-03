@@ -27,7 +27,9 @@ struct NowPlayingView: View {
                         SyncedLyricsView(
                             lyrics: player.currentTrack?.lyrics,
                             currentTime: player.currentTime,
-                            emptyText: settings.text("noLyrics")
+                            duration: player.duration,
+                            emptyText: settings.text("noLyrics"),
+                            onSeek: player.seek
                         )
                         .padding(.horizontal, 24)
                     }
@@ -133,11 +135,17 @@ private struct LyricLine: Identifiable {
 private struct SyncedLyricsView: View {
     let lyrics: String?
     let currentTime: TimeInterval
+    let duration: TimeInterval
     let emptyText: String
+    let onSeek: (TimeInterval) -> Void
+    @State private var isDragging = false
+    @State private var dragStartTime: TimeInterval = 0
+    @State private var draggedTime: TimeInterval?
 
     private var lines: [LyricLine] { Self.parse(lyrics ?? "") }
+    private var displayTime: TimeInterval { draggedTime ?? currentTime }
     private var activeLineID: Int? {
-        lines.last(where: { $0.time <= currentTime + 0.05 })?.id
+        lines.last(where: { $0.time.isFinite && $0.time <= displayTime + 0.05 })?.id
     }
 
     var body: some View {
@@ -151,22 +159,47 @@ private struct SyncedLyricsView: View {
                     LazyVStack(spacing: 18) {
                         Color.clear.frame(height: 100)
                         ForEach(lines) { line in
-                            Text(line.text)
-                                .font(activeLineID == line.id ? .title3.bold() : .body)
-                                .foregroundStyle(activeLineID == line.id ? Color.primary : Color.secondary)
-                                .multilineTextAlignment(.center)
-                                .scaleEffect(activeLineID == line.id ? 1 : 0.94)
-                                .animation(.easeInOut(duration: 0.25), value: activeLineID)
-                                .id(line.id)
+                            Button {
+                                guard line.time.isFinite else { return }
+                                onSeek(line.time)
+                                withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(line.id, anchor: .center) }
+                            } label: {
+                                Text(line.text)
+                                    .font(activeLineID == line.id ? .title3.bold() : .body)
+                                    .foregroundStyle(activeLineID == line.id ? Color.primary : Color.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .scaleEffect(activeLineID == line.id ? 1 : 0.94)
+                                    .animation(.easeInOut(duration: 0.25), value: activeLineID)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
+                            .id(line.id)
                         }
                         Color.clear.frame(height: 100)
                     }
                 }
             }
             .onChange(of: activeLineID) { id in
-                guard let id else { return }
+                guard let id, !isDragging else { return }
                 withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(id, anchor: .center) }
             }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { value in
+                        if !isDragging {
+                            isDragging = true
+                            dragStartTime = currentTime
+                        }
+                        let target = min(max(dragStartTime - Double(value.translation.height) * 0.12, 0), max(duration, 0))
+                        draggedTime = target
+                        onSeek(target)
+                    }
+                    .onEnded { _ in
+                        if let draggedTime { onSeek(draggedTime) }
+                        self.draggedTime = nil
+                        isDragging = false
+                    }
+            )
         }
         .mask(LinearGradient(colors: [.clear, .black, .black, .clear], startPoint: .top, endPoint: .bottom))
     }
