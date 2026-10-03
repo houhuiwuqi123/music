@@ -193,7 +193,14 @@ final class LocalMusicLibrary: ObservableObject {
     }
 
     func importArtwork(from url: URL, for trackID: UUID) throws {
-        let sourceData = try readSecurityScopedData(from: url)
+        try updateArtwork(from: readSecurityScopedData(from: url), for: trackID)
+    }
+
+    func updateArtwork(from sourceData: Data, for trackID: UUID) throws {
+        updateArtwork(try normalizedArtworkData(from: sourceData), for: trackID)
+    }
+
+    func normalizedArtworkData(from sourceData: Data) throws -> Data {
         guard let image = UIImage(data: sourceData) else { throw CocoaError(.fileReadCorruptFile) }
 
         let maxDimension: CGFloat = 1600
@@ -204,7 +211,7 @@ final class LocalMusicLibrary: ObservableObject {
         guard let normalizedData = normalizedImage.jpegData(compressionQuality: 0.9) else {
             throw CocoaError(.fileWriteUnknown)
         }
-        updateArtwork(normalizedData, for: trackID)
+        return normalizedData
     }
 
     func renameTrack(id: UUID, to name: String) {

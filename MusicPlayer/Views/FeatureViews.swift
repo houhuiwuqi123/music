@@ -1,4 +1,5 @@
 import AVKit
+import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -164,16 +165,14 @@ struct SongsView: View {
 }
 
 struct TrackDetailView: View {
-    private enum ImportKind { case cover, lyrics }
-
     let trackID: UUID
     @EnvironmentObject private var library: LocalMusicLibrary
     @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
-    @State private var showsImporter = false
-    @State private var importKind: ImportKind = .cover
+    @State private var showsLyricsImporter = false
+    @State private var selectedCoverItem: PhotosPickerItem?
     @State private var showsDeleteOptions = false
     @State private var showsInfoEditor = false
     @State private var editedTitle = ""
@@ -185,7 +184,7 @@ struct TrackDetailView: View {
         ScrollView {
             if let track {
                 VStack(spacing: 22) {
-                    Button { importKind = .cover; showsImporter = true } label: {
+                    PhotosPicker(selection: $selectedCoverItem, matching: .images, photoLibrary: .shared()) {
                         ZStack(alignment: .bottom) {
                             ArtworkView(track: track, size: 238, cornerRadius: 38)
                             Label(settings.text("changeCover"), systemImage: "photo.badge.plus")
@@ -214,7 +213,7 @@ struct TrackDetailView: View {
                     }
                     .buttonStyle(.borderedProminent).tint(.purple)
 
-                    Button { importKind = .lyrics; showsImporter = true } label: {
+                    Button { showsLyricsImporter = true } label: {
                         Label(settings.text("uploadLyrics"), systemImage: "text.quote").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -262,17 +261,26 @@ struct TrackDetailView: View {
         }
         .navigationTitle(settings.text("details"))
         .navigationBarTitleDisplayMode(.inline)
-        .fileImporter(isPresented: $showsImporter, allowedContentTypes: importKind == .cover ? [.image] : [.plainText]) { result in
+        .onChange(of: selectedCoverItem) { item in
+            guard let item else { return }
+            Task {
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
+                        throw CocoaError(.fileReadUnknown)
+                    }
+                    try library.updateArtwork(from: data, for: trackID)
+                } catch {
+                    library.importError = error.localizedDescription
+                }
+                selectedCoverItem = nil
+            }
+        }
+        .fileImporter(isPresented: $showsLyricsImporter, allowedContentTypes: [.plainText]) { result in
             guard case .success(let url) = result else { return }
             do {
-                switch importKind {
-                case .cover:
-                    try library.importArtwork(from: url, for: trackID)
-                case .lyrics:
-                    let data = try library.readSecurityScopedData(from: url)
-                    guard let lyrics = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
-                    library.updateLyrics(lyrics, for: trackID)
-                }
+                let data = try library.readSecurityScopedData(from: url)
+                guard let lyrics = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
+                library.updateLyrics(lyrics, for: trackID)
             } catch {
                 library.importError = error.localizedDescription
             }
@@ -521,7 +529,7 @@ struct PlaylistDetailView: View {
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
-    @State private var showsCoverImporter = false
+    @State private var selectedCoverItem: PhotosPickerItem?
     @State private var showsSongManager = false
     @State private var showsRename = false
     @State private var showsDeleteOptions = false
@@ -533,7 +541,7 @@ struct PlaylistDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                Button { showsCoverImporter = true } label: {
+                PhotosPicker(selection: $selectedCoverItem, matching: .images, photoLibrary: .shared()) {
                     ZStack(alignment: .bottom) {
                         ArtworkView(track: tracks.first, artworkData: playlist?.artworkData, size: 176, cornerRadius: 34)
                         Label(settings.text("changeCover"), systemImage: "photo.badge.plus")
@@ -569,12 +577,18 @@ struct PlaylistDetailView: View {
             .padding(18).padding(.bottom, 110)
         }
         .navigationBarTitleDisplayMode(.inline)
-        .fileImporter(isPresented: $showsCoverImporter, allowedContentTypes: [.image]) { result in
-            guard case .success(let url) = result else { return }
-            do {
-                dataStore.updateArtwork(try library.readSecurityScopedData(from: url), for: playlistID)
-            } catch {
-                library.importError = error.localizedDescription
+        .onChange(of: selectedCoverItem) { item in
+            guard let item else { return }
+            Task {
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
+                        throw CocoaError(.fileReadUnknown)
+                    }
+                    dataStore.updateArtwork(try library.normalizedArtworkData(from: data), for: playlistID)
+                } catch {
+                    library.importError = error.localizedDescription
+                }
+                selectedCoverItem = nil
             }
         }
         .sheet(isPresented: $showsSongManager) {
