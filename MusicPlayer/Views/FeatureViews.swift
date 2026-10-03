@@ -119,7 +119,7 @@ struct SongsView: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
                             .glassCard(cornerRadius: 18)
-                            .listRowInsets(EdgeInsets(top: 0.5, leading: 14, bottom: 0.5, trailing: 14))
+                            .listRowInsets(EdgeInsets(top: 1.5, leading: 14, bottom: 1.5, trailing: 14))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -315,7 +315,7 @@ struct ArtistsView: View {
                                     .glassCard(cornerRadius: 18)
                                 }
                                 .buttonStyle(.plain)
-                                .listRowInsets(EdgeInsets(top: 0.5, leading: 14, bottom: 0.5, trailing: 14))
+                                .listRowInsets(EdgeInsets(top: 1.5, leading: 14, bottom: 1.5, trailing: 14))
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
                             }
@@ -436,7 +436,7 @@ struct PlaylistsView: View {
                             .glassCard(cornerRadius: 18)
                         }
                         .buttonStyle(.plain)
-                        .listRowInsets(EdgeInsets(top: 0.5, leading: 14, bottom: 0.5, trailing: 14))
+                        .listRowInsets(EdgeInsets(top: 1.5, leading: 14, bottom: 1.5, trailing: 14))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
