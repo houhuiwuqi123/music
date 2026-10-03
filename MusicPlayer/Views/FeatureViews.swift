@@ -173,6 +173,9 @@ struct TrackDetailView: View {
     @State private var showsCoverImporter = false
     @State private var showsLyricsImporter = false
     @State private var showsDeleteOptions = false
+    @State private var showsInfoEditor = false
+    @State private var editedTitle = ""
+    @State private var editedArtist = ""
 
     private var track: Track? { library.tracks.first(where: { $0.id == trackID }) }
 
@@ -194,6 +197,15 @@ struct TrackDetailView: View {
                         Text(track.title).font(.largeTitle.bold()).multilineTextAlignment(.center)
                         Text(track.artist).foregroundStyle(.secondary)
                     }
+
+                    Button {
+                        editedTitle = track.title
+                        editedArtist = track.artist
+                        showsInfoEditor = true
+                    } label: {
+                        Label(settings.text("editSongInfo"), systemImage: "pencil").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
 
                     Button { player.play(track, in: library.tracks) } label: {
                         Label(settings.text("playAll"), systemImage: "play.fill").frame(maxWidth: .infinity)
@@ -264,6 +276,12 @@ struct TrackDetailView: View {
                 library.updateLyrics(lyrics, for: trackID)
             } catch {
                 library.importError = error.localizedDescription
+            }
+        }
+        .sheet(isPresented: $showsInfoEditor) {
+            EditTrackInfoSheet(title: $editedTitle, artist: $editedArtist) {
+                library.updateTrackInfo(id: trackID, title: editedTitle, artist: editedArtist)
+                showsInfoEditor = false
             }
         }
         .confirmationDialog(
@@ -667,6 +685,44 @@ private struct RenameTrackSheet: View {
         .padding(24)
         .background(Color(white: 0.94).ignoresSafeArea())
         .presentationDetents([.height(230)])
+    }
+}
+
+private struct EditTrackInfoSheet: View {
+    @Binding var title: String
+    @Binding var artist: String
+    let onSave: () -> Void
+    @EnvironmentObject private var settings: AppSettings
+    @Environment(\.dismiss) private var dismiss
+
+    private var canSave: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text(settings.text("editSongInfo")).font(.title2.bold()).foregroundStyle(.black)
+            TextField(settings.text("songName"), text: $title)
+                .textInputAutocapitalization(.words)
+                .foregroundStyle(.black).tint(.purple).padding(14)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
+                .overlay { RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.15)) }
+            TextField(settings.text("artistName"), text: $artist)
+                .textInputAutocapitalization(.words)
+                .foregroundStyle(.black).tint(.purple).padding(14)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
+                .overlay { RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.15)) }
+            HStack {
+                Button(settings.text("cancel")) { dismiss() }.foregroundStyle(.secondary)
+                Spacer()
+                Button(settings.text("save"), action: onSave)
+                    .buttonStyle(.borderedProminent).tint(.purple).disabled(!canSave)
+            }
+        }
+        .padding(24)
+        .background(Color(white: 0.94).ignoresSafeArea())
+        .presentationDetents([.height(310)])
     }
 }
 

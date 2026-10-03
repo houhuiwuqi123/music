@@ -199,6 +199,17 @@ final class LocalMusicLibrary: ObservableObject {
         saveLibrary()
     }
 
+    func updateTrackInfo(id: UUID, title: String, artist: String) {
+        let cleanedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedTitle.isEmpty, !cleanedArtist.isEmpty,
+              let index = tracks.firstIndex(where: { $0.id == id }) else { return }
+        tracks[index].title = cleanedTitle
+        tracks[index].artist = cleanedArtist
+        tracks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        saveLibrary()
+    }
+
     func updateLyrics(_ lyrics: String, for trackID: UUID) {
         guard let index = tracks.firstIndex(where: { $0.id == trackID }) else { return }
         tracks[index].lyrics = lyrics

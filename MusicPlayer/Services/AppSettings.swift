@@ -68,7 +68,8 @@ final class AppSettings: ObservableObject {
             "playlistAndLibrary": ("移出音乐库并删歌单", "Remove Songs and Playlist"),
             "playlistAndFiles": ("删除本地歌曲和歌单", "Delete Local Songs and Playlist"),
             "deletePlaylistMessage": ("请选择是否同时处理歌单中的歌曲。", "Choose whether to also remove the songs in this playlist."),
-            "renamePlaylist": ("修改歌单名称", "Rename Playlist")
+            "renamePlaylist": ("修改歌单名称", "Rename Playlist"),
+            "editSongInfo": ("修改歌曲信息", "Edit Song Info"), "artistName": ("艺人名称", "Artist Name")
         ]
         guard let value = translations[key] else { return key }
         return language == .chinese ? value.zh : value.en
