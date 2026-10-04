@@ -311,7 +311,9 @@ struct SongsView: View {
                                     }
                                 }
                             }
-                            .listStyle(.plain).scrollContentBackground(.hidden)
+                            .listStyle(.plain)
+                            .scrollContentBackground(.hidden)
+                            .ignoresSafeArea(.container, edges: .bottom)
                         }
                     } else if library.videos.isEmpty {
                         VStack(spacing: 12) {
@@ -350,7 +352,9 @@ struct SongsView: View {
                                 }
                             }
                         }
-                        .listStyle(.plain).scrollContentBackground(.hidden)
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .ignoresSafeArea(.container, edges: .bottom)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -594,6 +598,7 @@ struct ArtistsView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .ignoresSafeArea(.container, edges: .bottom)
                 }
             }
             .navigationDestination(for: Artist.self) { ArtistDetailView(artist: $0) }
@@ -790,6 +795,7 @@ struct PlaylistsView: View {
                 }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .ignoresSafeArea(.container, edges: .bottom)
                 }
             }
             .overlay(alignment: .bottomTrailing) {
