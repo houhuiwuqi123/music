@@ -43,18 +43,19 @@ struct HomeView: View {
                         Text(settings.text("videoTab")).tag(MediaLibraryTab.videos)
                     }
                     .pickerStyle(.segmented)
-                    VStack(spacing: 16) {
+                    VStack(spacing: 3) {
                         if rankingTab == .songs {
                             let top = dataStore.topTracks(from: library.tracks)
                             ForEach(Array(top.enumerated()), id: \.element.id) { index, track in
                                 HStack(spacing: 12) {
-                                    Text(String(format: "%02d", index + 1))
+                                    Text("\(index + 1)")
                                         .font(.headline.monospacedDigit()).foregroundStyle(.secondary)
-                                        .lineLimit(1).fixedSize().frame(width: 28)
+                                        .lineLimit(1).frame(minWidth: 28, alignment: .trailing)
                                     TrackRow(track: track, trailingText: "\(dataStore.playCount(for: track.id)) \(settings.text("plays"))") {
                                         player.play(track, in: library.tracks)
                                     }
                                 }
+                                .padding(.vertical, 10)
                             }
                             if top.isEmpty { Text("—").foregroundStyle(.tertiary).frame(maxWidth: .infinity) }
                         } else {
@@ -62,9 +63,9 @@ struct HomeView: View {
                             ForEach(Array(topVideos.enumerated()), id: \.element.id) { index, video in
                                 Button { player.pause(); selectedVideo = video } label: {
                                     HStack(spacing: 12) {
-                                        Text(String(format: "%02d", index + 1))
+                                        Text("\(index + 1)")
                                             .font(.headline.monospacedDigit()).foregroundStyle(.secondary)
-                                            .lineLimit(1).fixedSize().frame(width: 28)
+                                            .lineLimit(1).frame(minWidth: 28, alignment: .trailing)
                                         Image(systemName: "play.rectangle.fill").foregroundStyle(.purple)
                                         VStack(alignment: .leading, spacing: 3) {
                                             Text(video.title).font(.body.weight(.semibold)).lineLimit(1)
@@ -74,7 +75,9 @@ struct HomeView: View {
                                         Text("\(dataStore.playCount(for: video.id)) \(settings.text("plays"))")
                                             .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
                                     }
-                                }.buttonStyle(.plain)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.vertical, 10)
                             }
                             if topVideos.isEmpty { Text("—").foregroundStyle(.tertiary).frame(maxWidth: .infinity) }
                         }
@@ -123,14 +126,7 @@ struct SongsView: View {
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
-            VStack(spacing: 8) {
-                Picker(settings.text("songs"), selection: $mediaTab) {
-                    Text(settings.text("songTab")).tag(MediaLibraryTab.songs)
-                    Text(settings.text("videoTab")).tag(MediaLibraryTab.videos)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-
+            VStack(spacing: 0) {
                 Group {
                     if mediaTab == .songs {
                         if library.tracks.isEmpty {
@@ -207,6 +203,16 @@ struct SongsView: View {
                         }
                         .listStyle(.plain).scrollContentBackground(.hidden)
                     }
+                }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    Picker(settings.text("songs"), selection: $mediaTab) {
+                        Text(settings.text("songTab")).tag(MediaLibraryTab.songs)
+                        Text(settings.text("videoTab")).tag(MediaLibraryTab.videos)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial)
                 }
                 .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 160) }
             }
@@ -311,15 +317,15 @@ struct TrackDetailView: View {
                     }
                     .buttonStyle(.bordered)
 
-                    VStack(alignment: .leading, spacing: 14) {
-                        LabeledContent(settings.text("album"), value: track.albumName)
-                        LabeledContent(settings.text("duration"), value: track.duration.musicTime)
-                        LabeledContent(settings.text("file"), value: track.fileURL.lastPathComponent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        LabeledContent(settings.text("album"), value: track.albumName).padding(.vertical, 10)
+                        LabeledContent(settings.text("duration"), value: track.duration.musicTime).padding(.vertical, 10)
+                        LabeledContent(settings.text("file"), value: track.fileURL.lastPathComponent).padding(.vertical, 10)
                     }
                     .padding(18).glassCard()
 
                     if !dataStore.playlists.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
                             SectionHeader(title: settings.text("addPlaylist"))
                             ForEach(dataStore.playlists) { playlist in
                                 Button {
@@ -336,6 +342,7 @@ struct TrackDetailView: View {
                                     }
                                 }
                                 .buttonStyle(.plain)
+                                .padding(.vertical, 10)
                                 .disabled(playlist.trackIDs.contains(track.id))
                             }
                         }
@@ -461,10 +468,11 @@ struct ArtistDetailView: View {
                 ArtworkView(track: artist.tracks.first, size: 170, cornerRadius: 85)
                 Text(artist.name).font(.largeTitle.bold())
                 queueButtons(tracks: artist.tracks)
-                VStack(alignment: .leading, spacing: 15) {
+                VStack(alignment: .leading, spacing: 3) {
                     SectionHeader(title: settings.text("songsSection"))
                     ForEach(artist.tracks) { track in
                         TrackRow(track: track, trailingText: track.duration.musicTime) { player.play(track, in: artist.tracks) }
+                            .padding(.vertical, 10)
                             .contextMenu {
                                 if !dataStore.playlists.isEmpty {
                                     Menu(settings.text("addPlaylist")) {
@@ -478,7 +486,7 @@ struct ArtistDetailView: View {
                 }
                 .padding(18)
                 .glassCard()
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
                     SectionHeader(title: settings.text("musicVideos"), subtitle: "\(artist.videos.count)")
                     if artist.videos.isEmpty {
                         Label(settings.text("noVideos"), systemImage: "video.slash").foregroundStyle(.secondary)
@@ -496,6 +504,7 @@ struct ArtistDetailView: View {
                                 }
                             }
                             .buttonStyle(.plain)
+                            .padding(.vertical, 10)
                         }
                     }
                 }
@@ -659,9 +668,10 @@ struct PlaylistDetailView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.purple)
                 .disabled(tracks.isEmpty)
-                VStack(spacing: 15) {
+                VStack(spacing: 3) {
                     ForEach(tracks) { track in
                         TrackRow(track: track, trailingText: track.duration.musicTime) { player.play(track, in: tracks) }
+                            .padding(.vertical, 10)
                             .contextMenu { Button(settings.text("removePlaylist"), role: .destructive) { dataStore.remove(track.id, from: playlistID) } }
                     }
                 }
@@ -889,7 +899,16 @@ private struct ManagePlaylistSongsView: View {
                             .foregroundStyle(isAdded ? Color.purple : Color.secondary)
                     }
                 }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .glassCard(cornerRadius: 18)
+                .listRowInsets(EdgeInsets(top: 1.5, leading: 14, bottom: 1.5, trailing: 14))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             .navigationTitle(settings.text("manageSongs"))
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) { Button(settings.text("done")) { dismiss() } }

@@ -189,6 +189,7 @@ final class LocalMusicLibrary: ObservableObject {
     func updateArtwork(_ artworkData: Data, for trackID: UUID) {
         guard let index = tracks.firstIndex(where: { $0.id == trackID }) else { return }
         tracks[index].artworkData = artworkData
+        tracks[index].artworkWasEdited = true
         saveLibrary()
     }
 
@@ -218,6 +219,7 @@ final class LocalMusicLibrary: ObservableObject {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty, let index = tracks.firstIndex(where: { $0.id == id }) else { return }
         tracks[index].title = cleaned
+        tracks[index].titleWasEdited = true
         tracks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         saveLibrary()
     }
@@ -229,6 +231,8 @@ final class LocalMusicLibrary: ObservableObject {
               let index = tracks.firstIndex(where: { $0.id == id }) else { return }
         tracks[index].title = cleanedTitle
         tracks[index].artist = cleanedArtist
+        tracks[index].titleWasEdited = true
+        tracks[index].artistWasEdited = true
         tracks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         saveLibrary()
     }
@@ -240,6 +244,8 @@ final class LocalMusicLibrary: ObservableObject {
               let index = videos.firstIndex(where: { $0.id == id }) else { return }
         videos[index].title = cleanedTitle
         videos[index].artist = cleanedArtist
+        videos[index].titleWasEdited = true
+        videos[index].artistWasEdited = true
         videos.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         saveLibrary()
     }
@@ -254,6 +260,7 @@ final class LocalMusicLibrary: ObservableObject {
     func updateLyrics(_ lyrics: String, for trackID: UUID) {
         guard let index = tracks.firstIndex(where: { $0.id == trackID }) else { return }
         tracks[index].lyrics = lyrics
+        tracks[index].lyricsWereEdited = true
         saveLibrary()
     }
 
@@ -320,7 +327,10 @@ final class LocalMusicLibrary: ObservableObject {
     private func loadLibrary() {
         do {
             let data = try Data(contentsOf: try indexURL())
-            let decoded = try JSONDecoder().decode([Track].self, from: data)
+            var decoded = try JSONDecoder().decode([Track].self, from: data)
+            for index in decoded.indices {
+                decoded[index].fileURL = restoredMediaURL(for: decoded[index].fileURL)
+            }
             tracks = decoded.filter {
                 fileManager.fileExists(atPath: $0.fileURL.path)
                     && !hiddenTrackPaths.contains($0.fileURL.standardizedFileURL.path)
@@ -328,11 +338,13 @@ final class LocalMusicLibrary: ObservableObject {
             for index in tracks.indices {
                 let inferred = inferMediaInfo(from: tracks[index].fileURL)
                 let originalFileTitle = cleanFilenameStem(tracks[index].fileURL)
-                if tracks[index].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || tracks[index].title == originalFileTitle {
+                     if tracks[index].titleWasEdited != true,
+                         (tracks[index].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || tracks[index].title == originalFileTitle) {
                     tracks[index].title = inferred.title
                 }
-                if isUnknownArtist(tracks[index].artist), let artist = inferred.artist {
+                     if tracks[index].artistWasEdited != true,
+                         isUnknownArtist(tracks[index].artist), let artist = inferred.artist {
                     tracks[index].artist = artist
                 }
             }
@@ -340,16 +352,21 @@ final class LocalMusicLibrary: ObservableObject {
             tracks = []
         }
         if let data = try? Data(contentsOf: try videoIndexURL()),
-           let decoded = try? JSONDecoder().decode([LocalVideo].self, from: data) {
+           var decoded = try? JSONDecoder().decode([LocalVideo].self, from: data) {
+            for index in decoded.indices {
+                decoded[index].fileURL = restoredMediaURL(for: decoded[index].fileURL)
+            }
             videos = decoded.filter { fileManager.fileExists(atPath: $0.fileURL.path) }
             for index in videos.indices {
                 let inferred = inferMediaInfo(from: videos[index].fileURL)
                 let originalFileTitle = cleanFilenameStem(videos[index].fileURL)
-                if videos[index].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || videos[index].title == originalFileTitle {
+                     if videos[index].titleWasEdited != true,
+                         (videos[index].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || videos[index].title == originalFileTitle) {
                     videos[index].title = inferred.title
                 }
-                if isUnknownArtist(videos[index].artist), let artist = inferred.artist {
+                     if videos[index].artistWasEdited != true,
+                         isUnknownArtist(videos[index].artist), let artist = inferred.artist {
                     videos[index].artist = artist
                 }
             }
@@ -386,6 +403,24 @@ final class LocalMusicLibrary: ObservableObject {
             return (compactParts[1], compactParts[0])
         }
         return (stem.isEmpty ? url.deletingPathExtension().lastPathComponent : stem, nil)
+    }
+
+    private func restoredMediaURL(for storedURL: URL) -> URL {
+        if fileManager.fileExists(atPath: storedURL.path) { return storedURL }
+        let filename = storedURL.lastPathComponent
+        if let importedFolder = try? audioFolderURL() {
+            let importedCandidate = importedFolder.appendingPathComponent(filename)
+            if fileManager.fileExists(atPath: importedCandidate.path) { return importedCandidate }
+        }
+        guard let documents = try? documentsURL() else { return storedURL }
+        let directCandidate = documents.appendingPathComponent(filename)
+        if fileManager.fileExists(atPath: directCandidate.path) { return directCandidate }
+        let match = fileManager.enumerator(
+            at: documents,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        )?.compactMap { $0 as? URL }.first { $0.lastPathComponent == filename }
+        return match ?? storedURL
     }
 
     private func cleanFilenameStem(_ url: URL) -> String {

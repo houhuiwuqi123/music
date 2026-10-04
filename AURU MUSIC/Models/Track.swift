@@ -9,6 +9,10 @@ struct Track: Identifiable, Codable, Hashable {
     var fileURL: URL
     var artworkData: Data?
     var lyrics: String?
+    var titleWasEdited: Bool?
+    var artistWasEdited: Bool?
+    var artworkWasEdited: Bool?
+    var lyricsWereEdited: Bool?
 
     init(
         id: UUID = UUID(),
@@ -18,7 +22,11 @@ struct Track: Identifiable, Codable, Hashable {
         duration: TimeInterval,
         fileURL: URL,
         artworkData: Data? = nil,
-        lyrics: String? = nil
+        lyrics: String? = nil,
+        titleWasEdited: Bool? = nil,
+        artistWasEdited: Bool? = nil,
+        artworkWasEdited: Bool? = nil,
+        lyricsWereEdited: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -28,6 +36,10 @@ struct Track: Identifiable, Codable, Hashable {
         self.fileURL = fileURL
         self.artworkData = artworkData
         self.lyrics = lyrics
+        self.titleWasEdited = titleWasEdited
+        self.artistWasEdited = artistWasEdited
+        self.artworkWasEdited = artworkWasEdited
+        self.lyricsWereEdited = lyricsWereEdited
     }
 }
 

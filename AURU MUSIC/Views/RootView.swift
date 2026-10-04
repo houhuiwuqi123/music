@@ -129,7 +129,12 @@ struct RootView: View {
             }
             Spacer()
             VStack(spacing: 1) {
-                Text("AURU MUSIC").font(.caption.weight(.black)).tracking(3).foregroundStyle(.purple)
+                Text("AURU MUSIC")
+                    .font(.caption.weight(.black)).tracking(2)
+                    .foregroundStyle(.purple)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .fixedSize(horizontal: true, vertical: false)
                 Text(currentTitle).font(.headline)
             }
             Spacer()
@@ -168,19 +173,20 @@ struct RootView: View {
         let videos = library.videos.filter { $0.title.localizedCaseInsensitiveContains(query) || $0.artist.localizedCaseInsensitiveContains(query) }
 
         return ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 3) {
                 ForEach(tracks.prefix(8)) { track in
                     TrackRow(track: track) { player.play(track, in: library.tracks); searchText = "" }
+                        .padding(.vertical, 10)
                 }
                 ForEach(artists.prefix(5)) { artist in
                     Button { selectedArtist = artist; searchText = "" } label: {
                         Label(artist.name, systemImage: "person.crop.circle").frame(maxWidth: .infinity, alignment: .leading)
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.plain).padding(.vertical, 10)
                 }
                 ForEach(playlists.prefix(5)) { playlist in
                     Button { selectedPlaylist = playlist; searchText = "" } label: {
                         Label(playlist.name, systemImage: "rectangle.stack").frame(maxWidth: .infinity, alignment: .leading)
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.plain).padding(.vertical, 10)
                 }
                 ForEach(videos.prefix(5)) { video in
                     Button { player.pause(); selectedVideo = video; searchText = "" } label: {
@@ -189,7 +195,7 @@ struct RootView: View {
                             Spacer()
                             Text(settings.text("video")).font(.caption).foregroundStyle(.secondary)
                         }
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.plain).padding(.vertical, 10)
                 }
                 if tracks.isEmpty && artists.isEmpty && playlists.isEmpty && videos.isEmpty {
                     Text(settings.text("noResults")).foregroundStyle(.secondary).frame(maxWidth: .infinity)

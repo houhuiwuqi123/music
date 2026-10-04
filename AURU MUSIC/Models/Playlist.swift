@@ -32,13 +32,17 @@ struct LocalVideo: Identifiable, Codable, Hashable {
     var artist: String
     var duration: TimeInterval
     var fileURL: URL
+    var titleWasEdited: Bool?
+    var artistWasEdited: Bool?
 
-    init(id: UUID = UUID(), title: String, artist: String, duration: TimeInterval, fileURL: URL) {
+    init(id: UUID = UUID(), title: String, artist: String, duration: TimeInterval, fileURL: URL, titleWasEdited: Bool? = nil, artistWasEdited: Bool? = nil) {
         self.id = id
         self.title = title
         self.artist = artist
         self.duration = duration
         self.fileURL = fileURL
+        self.titleWasEdited = titleWasEdited
+        self.artistWasEdited = artistWasEdited
     }
 }
 
