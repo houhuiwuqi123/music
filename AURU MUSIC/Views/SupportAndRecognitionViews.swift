@@ -107,23 +107,21 @@ final class SongRecognitionService: NSObject, ObservableObject, SHSessionDelegat
     private let session = SHSession()
     private let audioEngine = AVAudioEngine()
     private var tapInstalled = false
-    private var interruptionObserver: NSObjectProtocol?
     private var recognitionTimeoutTask: Task<Void, Never>?
 
     override init() {
         super.init()
         session.delegate = self
-        interruptionObserver = NotificationCenter.default.addObserver(
-            forName: AVAudioSession.interruptionNotification,
-            object: AVAudioSession.sharedInstance(),
-            queue: .main
-        ) { [weak self] notification in
-            Task { @MainActor in self?.handleInterruption(notification) }
-        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(audioSessionInterrupted(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
     }
 
     deinit {
-        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+        NotificationCenter.default.removeObserver(self)
     }
 
     func toggle() {
@@ -213,7 +211,7 @@ final class SongRecognitionService: NSObject, ObservableObject, SHSessionDelegat
         }
     }
 
-    private func handleInterruption(_ notification: Notification) {
+    @objc private func audioSessionInterrupted(_ notification: Notification) {
         guard let rawValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: rawValue),
               type == .began, state == .listening else { return }
