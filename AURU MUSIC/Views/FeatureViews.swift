@@ -128,6 +128,7 @@ private enum TrackSortOption: String, CaseIterable, Identifiable {
         }
     }
 
+    @MainActor
     func sorted(_ tracks: [Track], using dataStore: MusicDataStore) -> [Track] {
         tracks.sorted { lhs, rhs in
             switch self {
