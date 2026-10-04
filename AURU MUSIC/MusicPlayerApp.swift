@@ -15,7 +15,6 @@ struct MusicPlayerApp: App {
         appearance.shadowColor = UIColor.white.withAlphaComponent(0.08)
         UITabBar.appearance().standardAppearance = appearance
         UITabBar.appearance().scrollEdgeAppearance = appearance
-        UITabBar.appearance().isTranslucent = false
     }
 
     var body: some Scene {

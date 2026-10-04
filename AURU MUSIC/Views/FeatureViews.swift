@@ -313,7 +313,6 @@ struct SongsView: View {
                             }
                             .listStyle(.plain)
                             .scrollContentBackground(.hidden)
-                            .ignoresSafeArea(.container, edges: .bottom)
                         }
                     } else if library.videos.isEmpty {
                         VStack(spacing: 12) {
@@ -354,7 +353,6 @@ struct SongsView: View {
                         }
                         .listStyle(.plain)
                         .scrollContentBackground(.hidden)
-                        .ignoresSafeArea(.container, edges: .bottom)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -598,7 +596,6 @@ struct ArtistsView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .ignoresSafeArea(.container, edges: .bottom)
                 }
             }
             .navigationDestination(for: Artist.self) { ArtistDetailView(artist: $0) }
@@ -659,17 +656,14 @@ struct ArtistDetailView: View {
                                     Label(settings.text("delete"), systemImage: "trash")
                                 }
                             } label: {
-                                ZStack {
-                                    Color.clear
-                                    Image(systemName: "ellipsis")
-                                        .font(.title3.bold())
-                                        .foregroundStyle(Color.purple)
-                                }
-                                .frame(width: 40, height: 44)
+                                Image(systemName: "ellipsis")
+                                    .font(.title3.bold())
+                                    .foregroundStyle(Color.purple)
+                                    .frame(width: 40, height: 44)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .fixedSize()
+                            .frame(width: 40, height: 44)
                             .layoutPriority(2)
                             .zIndex(1)
                         }
@@ -795,7 +789,6 @@ struct PlaylistsView: View {
                 }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .ignoresSafeArea(.container, edges: .bottom)
                 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -921,17 +914,14 @@ struct PlaylistDetailView: View {
                                     Label(settings.text("removePlaylist"), systemImage: "minus.circle")
                                 }
                             } label: {
-                                ZStack {
-                                    Color.clear
-                                    Image(systemName: "ellipsis")
-                                        .font(.title3.bold())
-                                        .foregroundStyle(Color.purple)
-                                }
-                                .frame(width: 40, height: 44)
+                                Image(systemName: "ellipsis")
+                                    .font(.title3.bold())
+                                    .foregroundStyle(Color.purple)
+                                    .frame(width: 40, height: 44)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .fixedSize()
+                            .frame(width: 40, height: 44)
                             .layoutPriority(2)
                             .zIndex(1)
                         }
