@@ -354,7 +354,9 @@ struct SongsView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 160) }
+                .safeAreaInset(edge: .bottom) {
+                    Color.clear.frame(height: player.hasCurrentMedia ? 84 : 0)
+                }
             }
             .navigationDestination(for: Track.self) { TrackDetailView(trackID: $0.id) }
             .sheet(item: $renamingTrack) { track in
@@ -552,6 +554,7 @@ struct TrackDetailView: View {
 
 struct ArtistsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
+    @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var navigationPath: [Artist] = []
@@ -595,7 +598,9 @@ struct ArtistsView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 160) }
+                    .safeAreaInset(edge: .bottom) {
+                        Color.clear.frame(height: player.hasCurrentMedia ? 84 : 0)
+                    }
                 }
             }
             .navigationDestination(for: Artist.self) { ArtistDetailView(artist: $0) }
@@ -656,11 +661,14 @@ struct ArtistDetailView: View {
                                     Label(settings.text("delete"), systemImage: "trash")
                                 }
                             } label: {
-                                Image(systemName: "ellipsis")
-                                    .font(.title3.bold())
-                                    .frame(width: 34, height: 40)
-                                    .foregroundStyle(.secondary)
-                                    .contentShape(Rectangle())
+                                ZStack {
+                                    Color.clear
+                                    Image(systemName: "ellipsis")
+                                        .font(.title3.bold())
+                                        .foregroundStyle(Color.purple)
+                                }
+                                .frame(width: 40, height: 44)
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .fixedSize()
@@ -747,6 +755,7 @@ struct ArtistDetailView: View {
 
 struct PlaylistsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
+    @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var showsCreate = false
@@ -789,7 +798,9 @@ struct PlaylistsView: View {
                 }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 160) }
+                    .safeAreaInset(edge: .bottom) {
+                        Color.clear.frame(height: player.hasCurrentMedia ? 84 : 0)
+                    }
                 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -915,11 +926,14 @@ struct PlaylistDetailView: View {
                                     Label(settings.text("removePlaylist"), systemImage: "minus.circle")
                                 }
                             } label: {
-                                Image(systemName: "ellipsis")
-                                    .font(.title3.bold())
-                                    .frame(width: 34, height: 40)
-                                    .foregroundStyle(.secondary)
-                                    .contentShape(Rectangle())
+                                ZStack {
+                                    Color.clear
+                                    Image(systemName: "ellipsis")
+                                        .font(.title3.bold())
+                                        .foregroundStyle(Color.purple)
+                                }
+                                .frame(width: 40, height: 44)
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .fixedSize()

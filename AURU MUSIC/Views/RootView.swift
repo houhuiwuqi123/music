@@ -64,6 +64,7 @@ struct RootView: View {
         .overlay(alignment: .bottom) {
             MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
                 .padding(.bottom, 58)
+                .zIndex(100)
         }
         .fileImporter(
             isPresented: $showsImporter,
