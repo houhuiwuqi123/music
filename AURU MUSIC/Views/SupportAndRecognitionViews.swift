@@ -1,7 +1,5 @@
-#if AURU_ENABLE_SHAZAM
 import AVFoundation
-import ShazamKit
-#endif
+import CryptoKit
 import SwiftUI
 import UIKit
 import Vision
@@ -97,9 +95,8 @@ struct FeedSupportView: View {
     }
 }
 
-#if AURU_ENABLE_SHAZAM
 @MainActor
-final class SongRecognitionService: NSObject, ObservableObject, SHSessionDelegate {
+final class SongRecognitionService: NSObject, ObservableObject {
     enum State: Equatable { case idle, listening, found, failed(String), denied, unavailable }
 
     @Published private(set) var state: State = .idle
@@ -107,38 +104,27 @@ final class SongRecognitionService: NSObject, ObservableObject, SHSessionDelegat
     @Published private(set) var artist = ""
     @Published private(set) var artworkURL: URL?
 
-    private let session = SHSession()
-    private let audioEngine = AVAudioEngine()
-    private var tapInstalled = false
-    private var recognitionTimeoutTask: Task<Void, Never>?
-
-    override init() {
-        super.init()
-        session.delegate = self
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(audioSessionInterrupted(_:)),
-            name: AVAudioSession.interruptionNotification,
-            object: AVAudioSession.sharedInstance()
-        )
+    private enum ACRCloud {
+        static let host = "identify-ap-southeast-1.acrcloud.com"
+        static let accessKey = "4b4e7a046007a357be1743088cb74a6e"
+        static let accessSecret = "MisLNrNBsjsDMiIW0lWwnmGfYOZxpgNAlbTab9IL"
+        static let path = "/v1/identify"
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
+    private var recorder: AVAudioRecorder?
+    private var recognitionTask: Task<Void, Never>?
+    private var recordingURL: URL?
 
     func toggle() {
         state == .listening ? stop() : requestPermissionAndStart()
     }
 
     func stop() {
-        recognitionTimeoutTask?.cancel()
-        recognitionTimeoutTask = nil
-        if audioEngine.isRunning { audioEngine.stop() }
-        if tapInstalled {
-            audioEngine.inputNode.removeTap(onBus: 0)
-            tapInstalled = false
-        }
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recorder?.stop()
+        recorder = nil
+        removeRecording()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.allowAirPlay])
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -162,90 +148,151 @@ final class SongRecognitionService: NSObject, ObservableObject, SHSessionDelegat
 
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth])
-            try audioSession.setPreferredSampleRate(44_100)
-            try audioSession.setPreferredIOBufferDuration(0.023)
+            try audioSession.setCategory(.record, mode: .measurement, options: [.allowBluetooth])
             try audioSession.setActive(true)
 
-            let input = audioEngine.inputNode
-            let format = input.inputFormat(forBus: 0)
-            guard format.sampleRate > 0, format.channelCount > 0 else {
-                throw RecognitionError.invalidInputFormat
-            }
-            input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, time in
-                self?.session.matchStreamingBuffer(buffer, at: time)
-            }
-            tapInstalled = true
-            audioEngine.prepare()
-            try audioEngine.start()
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("auru-recognition-\(UUID().uuidString).m4a")
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 96_000,
+                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            ]
+            let recorder = try AVAudioRecorder(url: url, settings: settings)
+            recorder.prepareToRecord()
+            guard recorder.record() else { throw RecognitionError.recordingFailed }
+            self.recorder = recorder
+            recordingURL = url
             state = .listening
-            recognitionTimeoutTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 25_000_000_000)
-                guard !Task.isCancelled, let self, self.state == .listening else { return }
-                self.state = .failed("")
-                self.stop()
+            recognitionTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(10))
+                    guard !Task.isCancelled, let self, self.state == .listening else { return }
+                    self.recorder?.stop()
+                    self.recorder = nil
+                    let result = try await self.identifyRecording(at: url)
+                    guard !Task.isCancelled else { return }
+                    self.title = result.title
+                    self.artist = result.artist
+                    self.artworkURL = result.artworkURL
+                    self.state = .found
+                    self.finishAudioSession()
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard let self, !Task.isCancelled else { return }
+                    self.state = .failed(error.localizedDescription)
+                    self.finishAudioSession()
+                }
             }
         } catch {
             state = .failed(error.localizedDescription)
-            stop()
+            finishAudioSession()
         }
     }
 
-    nonisolated func session(_ session: SHSession, didFind match: SHMatch) {
-        guard let item = match.mediaItems.first else { return }
-        Task { @MainActor [weak self] in
-            self?.title = item.title ?? ""
-            self?.artist = item.artist ?? ""
-            self?.artworkURL = item.artworkURL
-            self?.state = .found
-            self?.stop()
+    private func identifyRecording(at url: URL) async throws -> RecognitionResult {
+        let sample = try Data(contentsOf: url)
+        guard !sample.isEmpty else { throw RecognitionError.recordingFailed }
+
+        let timestamp = String(Int(Date().timeIntervalSince1970))
+        let stringToSign = ["POST", ACRCloud.path, ACRCloud.accessKey, "audio", "1", timestamp].joined(separator: "\n")
+        let key = SymmetricKey(data: Data(ACRCloud.accessSecret.utf8))
+        let authentication = HMAC<Insecure.SHA1>.authenticationCode(for: Data(stringToSign.utf8), using: key)
+        let signature = Data(authentication).base64EncodedString()
+        let boundary = "Boundary-\(UUID().uuidString)"
+
+        guard let endpoint = URL(string: "https://\(ACRCloud.host)\(ACRCloud.path)") else {
+            throw RecognitionError.invalidResponse
         }
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = multipartBody(boundary: boundary, fields: [
+            "access_key": ACRCloud.accessKey,
+            "data_type": "audio",
+            "signature_version": "1",
+            "signature": signature,
+            "sample_bytes": String(sample.count),
+            "timestamp": timestamp
+        ], sample: sample)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw RecognitionError.serverUnavailable
+        }
+        return try parseResponse(data)
     }
 
-    nonisolated func session(_ session: SHSession, didNotFindMatchFor signature: SHSignature, error: Error?) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            if let error {
-                self.state = .failed(error.localizedDescription)
-                self.stop()
-            } else if self.audioEngine.isRunning {
-                self.state = .listening
-            }
+    private func multipartBody(boundary: String, fields: [String: String], sample: Data) -> Data {
+        var body = Data()
+        for (name, value) in fields {
+            body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".data(using: .utf8)!)
         }
+        body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"sample\"; filename=\"sample.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n".data(using: .utf8)!)
+        body.append(sample)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        return body
     }
 
-    @objc private func audioSessionInterrupted(_ notification: Notification) {
-        guard let rawValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: rawValue),
-              type == .began, state == .listening else { return }
-        state = .failed("Audio input was interrupted.")
-        stop()
+    private func parseResponse(_ data: Data) throws -> RecognitionResult {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let status = root["status"] as? [String: Any],
+              let code = status["code"] as? Int else { throw RecognitionError.invalidResponse }
+        guard code == 0,
+              let metadata = root["metadata"] as? [String: Any],
+              let songs = metadata["music"] as? [[String: Any]],
+              let song = songs.first,
+              let title = song["title"] as? String else {
+            if code == 1001 { throw RecognitionError.noMatch }
+            let message = status["msg"] as? String
+            throw RecognitionError.service(message ?? "ACRCloud error \(code)")
+        }
+        let artists = (song["artists"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
+        let external = song["external_metadata"] as? [String: Any]
+        let spotify = external?["spotify"] as? [String: Any]
+        let album = spotify?["album"] as? [String: Any]
+        let images = album?["images"] as? [[String: Any]]
+        let artworkURL = (images?.first?["url"] as? String).flatMap(URL.init(string:))
+        return RecognitionResult(title: title, artist: artists.joined(separator: ", "), artworkURL: artworkURL)
+    }
+
+    private func finishAudioSession() {
+        recorder?.stop()
+        recorder = nil
+        removeRecording()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.allowAirPlay])
+        try? AVAudioSession.sharedInstance().setActive(true)
+    }
+
+    private func removeRecording() {
+        if let recordingURL { try? FileManager.default.removeItem(at: recordingURL) }
+        recordingURL = nil
+    }
+
+    private struct RecognitionResult {
+        let title: String
+        let artist: String
+        let artworkURL: URL?
     }
 
     private enum RecognitionError: LocalizedError {
-        case invalidInputFormat
-        var errorDescription: String? { "Microphone audio format is unavailable." }
+        case recordingFailed, invalidResponse, serverUnavailable, noMatch, service(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .recordingFailed: return "Unable to record microphone audio."
+            case .invalidResponse: return "ACRCloud returned an invalid response."
+            case .serverUnavailable: return "ACRCloud is currently unavailable."
+            case .noMatch: return ""
+            case .service(let message): return message
+            }
+        }
     }
 }
-#else
-@MainActor
-final class SongRecognitionService: ObservableObject {
-    enum State: Equatable { case idle, listening, found, failed(String), denied, unavailable }
-
-    @Published private(set) var state: State = .idle
-    @Published private(set) var title = ""
-    @Published private(set) var artist = ""
-    @Published private(set) var artworkURL: URL?
-
-    func toggle() {
-        state = state == .unavailable ? .idle : .unavailable
-    }
-
-    func stop() {
-        if state == .listening { state = .idle }
-    }
-}
-#endif
 
 struct SongRecognitionView: View {
     @EnvironmentObject private var settings: AppSettings

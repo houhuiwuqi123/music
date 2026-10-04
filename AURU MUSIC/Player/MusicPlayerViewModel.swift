@@ -15,6 +15,7 @@ final class MusicPlayerViewModel: ObservableObject {
     }
 
     @Published private(set) var currentTrack: Track?
+    @Published private(set) var currentVideo: LocalVideo?
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
@@ -22,9 +23,16 @@ final class MusicPlayerViewModel: ObservableObject {
     @Published var shuffleEnabled = false
 
     var onTrackStarted: ((UUID) -> Void)?
+    var onVideoStarted: ((UUID) -> Void)?
 
-    private let player = AVPlayer()
-    private var queue: [Track] = []
+    var hasCurrentMedia: Bool { currentTrack != nil || currentVideo != nil }
+    var currentTitle: String { currentTrack?.title ?? currentVideo?.title ?? "" }
+    var currentArtist: String { currentTrack?.artist ?? currentVideo?.artist ?? "" }
+    var isVideo: Bool { currentVideo != nil }
+
+    let playbackPlayer = AVPlayer()
+    private var trackQueue: [Track] = []
+    private var videoQueue: [LocalVideo] = []
     private var currentIndex: Int?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
@@ -36,94 +44,148 @@ final class MusicPlayerViewModel: ObservableObject {
     }
 
     deinit {
-        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        if let timeObserver { playbackPlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
     }
 
     func play(_ track: Track, in tracks: [Track]) {
-        queue = tracks
+        trackQueue = tracks
+        videoQueue = []
         currentIndex = tracks.firstIndex(where: { $0.id == track.id })
         currentTrack = track
+        currentVideo = nil
         duration = track.duration
         currentTime = 0
         let item = AVPlayerItem(url: track.fileURL)
         observePlaybackEnd(for: item)
-        player.replaceCurrentItem(with: item)
-        player.play()
+        playbackPlayer.replaceCurrentItem(with: item)
+        playbackPlayer.play()
         isPlaying = true
         updateNowPlayingInfo()
         onTrackStarted?(track.id)
     }
 
+    func play(_ video: LocalVideo, in videos: [LocalVideo]) {
+        videoQueue = videos
+        trackQueue = []
+        currentIndex = videos.firstIndex(where: { $0.id == video.id })
+        currentVideo = video
+        currentTrack = nil
+        duration = video.duration
+        currentTime = 0
+        let item = AVPlayerItem(url: video.fileURL)
+        observePlaybackEnd(for: item)
+        playbackPlayer.replaceCurrentItem(with: item)
+        playbackPlayer.play()
+        isPlaying = true
+        updateNowPlayingInfo()
+        onVideoStarted?(video.id)
+    }
+
     func togglePlayback() {
-        guard player.currentItem != nil else {
-            if let first = queue.first { play(first, in: queue) }
+        guard playbackPlayer.currentItem != nil else {
+            if let first = trackQueue.first { play(first, in: trackQueue) }
+            else if let first = videoQueue.first { play(first, in: videoQueue) }
             return
         }
 
         if isPlaying {
-            player.pause()
+            playbackPlayer.pause()
         } else {
-            player.play()
+            playbackPlayer.play()
         }
         isPlaying.toggle()
         updateNowPlayingInfo()
     }
 
     func pause() {
-        player.pause()
+        playbackPlayer.pause()
         isPlaying = false
         updateNowPlayingInfo()
     }
 
     func seek(to seconds: TimeInterval) {
         let target = min(max(seconds, 0), duration)
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        playbackPlayer.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         currentTime = target
         updateNowPlayingInfo()
     }
 
     func next() {
-        guard !queue.isEmpty else { return }
+        let count = currentVideo == nil ? trackQueue.count : videoQueue.count
+        guard count > 0 else { return }
         let nextIndex: Int
-        if shuffleEnabled, queue.count > 1 {
-            let candidates = queue.indices.filter { $0 != currentIndex }
+        if shuffleEnabled, count > 1 {
+            let candidates = (0..<count).filter { $0 != currentIndex }
             nextIndex = candidates.randomElement() ?? 0
         } else {
-            nextIndex = ((currentIndex ?? -1) + 1) % queue.count
+            nextIndex = ((currentIndex ?? -1) + 1) % count
         }
-        play(queue[nextIndex], in: queue)
+        if currentVideo != nil { play(videoQueue[nextIndex], in: videoQueue) }
+        else { play(trackQueue[nextIndex], in: trackQueue) }
     }
 
     func previous() {
-        guard !queue.isEmpty else { return }
+        let count = currentVideo == nil ? trackQueue.count : videoQueue.count
+        guard count > 0 else { return }
         if currentTime > 3 {
             seek(to: 0)
             return
         }
         let index = currentIndex ?? 0
-        let previousIndex = (index - 1 + queue.count) % queue.count
-        play(queue[previousIndex], in: queue)
+        let previousIndex = (index - 1 + count) % count
+        if currentVideo != nil { play(videoQueue[previousIndex], in: videoQueue) }
+        else { play(trackQueue[previousIndex], in: trackQueue) }
     }
 
     func updateQueue(_ tracks: [Track]) {
-        queue = tracks
+        trackQueue = tracks
         if let id = currentTrack?.id {
             currentIndex = tracks.firstIndex(where: { $0.id == id })
-            if let updatedTrack = tracks.first(where: { $0.id == id }) { currentTrack = updatedTrack }
+            guard let updatedTrack = tracks.first(where: { $0.id == id }) else {
+                clearCurrentMedia()
+                return
+            }
+            currentTrack = updatedTrack
             updateNowPlayingInfo()
         }
     }
 
-    func insertNext(_ track: Track) {
-        queue.removeAll { $0.id == track.id && $0.id != currentTrack?.id }
-        if let currentID = currentTrack?.id {
-            currentIndex = queue.firstIndex(where: { $0.id == currentID })
+    func updateVideoQueue(_ videos: [LocalVideo]) {
+        videoQueue = videos
+        if let id = currentVideo?.id {
+            currentIndex = videos.firstIndex(where: { $0.id == id })
+            guard let updatedVideo = videos.first(where: { $0.id == id }) else {
+                clearCurrentMedia()
+                return
+            }
+            currentVideo = updatedVideo
+            updateNowPlayingInfo()
         }
-        let insertionIndex = min((currentIndex ?? -1) + 1, queue.count)
-        queue.insert(track, at: insertionIndex)
+    }
+
+    func clearCurrentMedia() {
+        playbackPlayer.pause()
+        playbackPlayer.replaceCurrentItem(with: nil)
+        currentTrack = nil
+        currentVideo = nil
+        currentIndex = nil
+        currentTime = 0
+        duration = 0
+        isPlaying = false
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
+    }
+
+    func insertNext(_ track: Track) {
+        trackQueue.removeAll { $0.id == track.id && $0.id != currentTrack?.id }
         if let currentID = currentTrack?.id {
-            currentIndex = queue.firstIndex(where: { $0.id == currentID })
+            currentIndex = trackQueue.firstIndex(where: { $0.id == currentID })
+        }
+        let insertionIndex = min((currentIndex ?? -1) + 1, trackQueue.count)
+        trackQueue.insert(track, at: insertionIndex)
+        if let currentID = currentTrack?.id {
+            currentIndex = trackQueue.firstIndex(where: { $0.id == currentID })
         }
     }
 
@@ -150,11 +212,11 @@ final class MusicPlayerViewModel: ObservableObject {
 
     private func observePlayback() {
         let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
-        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+        timeObserver = playbackPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.currentTime = time.seconds.isFinite ? time.seconds : 0
-                if let seconds = self.player.currentItem?.duration.seconds, seconds.isFinite {
+                if let seconds = self.playbackPlayer.currentItem?.duration.seconds, seconds.isFinite {
                     self.duration = seconds
                 }
                 self.updateNowPlayingInfo()
@@ -202,19 +264,19 @@ final class MusicPlayerViewModel: ObservableObject {
     }
 
     private func updateNowPlayingInfo() {
-        guard let track = currentTrack else {
+        guard hasCurrentMedia else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return
         }
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: track.title,
-            MPMediaItemPropertyArtist: track.artist,
-            MPMediaItemPropertyAlbumTitle: track.albumName,
+            MPMediaItemPropertyTitle: currentTitle,
+            MPMediaItemPropertyArtist: currentArtist,
+            MPMediaItemPropertyAlbumTitle: currentTrack?.albumName ?? "Video",
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
         ]
-        if let data = track.artworkData, let image = UIImage(data: data) {
+        if let data = currentTrack?.artworkData, let image = UIImage(data: data) {
             info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -240,7 +302,7 @@ final class MusicPlayerViewModel: ObservableObject {
         switch repeatMode {
         case .one:
             seek(to: 0)
-            player.play()
+            playbackPlayer.play()
             isPlaying = true
         case .list:
             next()

@@ -72,7 +72,7 @@ final class AppSettings: ObservableObject {
             "editSongInfo": ("修改歌曲信息", "Edit Song Info"), "artistName": ("艺人名称", "Artist Name"),
             "feedMe": ("去打赏", "Tip Me"), "feedSupport": ("打赏支持", "Support AURU MUSIC"),
             "feedThanks": ("感谢你的支持", "Thank you for your support"),
-            "tipMessage": ("创作不易，希望多多支持~~ 如果喜欢 ^ ^，欢迎用金钱狠狠地“侮辱”作者，让我看到你们的热情！", "Creating is not easy. If you enjoy AURU MUSIC ^ ^, your support means a lot and keeps the passion alive!"),
+            "tipMessage": ("创作不易，请多多支持~~\n如果喜欢^^，欢迎用金钱狠狠\"侮辱\"作者，让我看到你们的热情！", "Creating is not easy. Please support the work~~\nIf you enjoy it^^, your support means a lot and keeps the passion alive!"),
             "tipQRCode": ("打赏二维码", "Tip QR Code"),
             "openWechatPay": ("识别二维码并打开微信", "Recognize QR Code and Open WeChat"),
             "qrRecognitionFailed": ("未能识别二维码，请长按图片保存后使用微信扫一扫。", "The QR code could not be recognized. Save it and scan it in WeChat."),

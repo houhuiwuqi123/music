@@ -19,7 +19,6 @@ struct RootView: View {
     @State private var showsNowPlaying = false
     @State private var selectedArtist: Artist?
     @State private var selectedPlaylist: Playlist?
-    @State private var selectedVideo: LocalVideo?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -79,7 +78,6 @@ struct RootView: View {
         .sheet(item: $selectedPlaylist) { playlist in
             NavigationStack { PlaylistDetailView(playlistID: playlist.id) }
         }
-        .sheet(item: $selectedVideo) { LocalVideoPlayerSheet(video: $0) }
         .sheet(isPresented: $showsNowPlaying) {
             NowPlayingView(player: player)
                 .presentationDragIndicator(.visible)
@@ -92,11 +90,13 @@ struct RootView: View {
         .task {
             await library.refreshDocuments()
             player.updateQueue(library.tracks)
+            player.updateVideoQueue(library.videos)
             dataStore.reconcile(
                 validTrackIDs: Set(library.tracks.map(\.id)),
                 validVideoIDs: Set(library.videos.map(\.id))
             )
             player.onTrackStarted = { id in dataStore.recordPlay(trackID: id) }
+            player.onVideoStarted = { id in dataStore.recordPlay(trackID: id) }
         }
         .onChange(of: library.tracks) {
             player.updateQueue($0)
@@ -106,6 +106,7 @@ struct RootView: View {
             )
         }
         .onChange(of: library.videos) { videos in
+            player.updateVideoQueue(videos)
             dataStore.reconcile(
                 validTrackIDs: Set(library.tracks.map(\.id)),
                 validVideoIDs: Set(videos.map(\.id))
@@ -189,7 +190,7 @@ struct RootView: View {
                     }.buttonStyle(.plain).padding(.vertical, 10)
                 }
                 ForEach(videos.prefix(5)) { video in
-                    Button { player.pause(); selectedVideo = video; searchText = "" } label: {
+                    Button { player.play(video, in: library.videos); searchText = "" } label: {
                         HStack {
                             Label(video.title, systemImage: "play.rectangle.fill")
                             Spacer()

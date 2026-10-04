@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 
 struct NowPlayingView: View {
@@ -16,39 +17,47 @@ struct NowPlayingView: View {
                 VStack(spacing: 26) {
                     Spacer(minLength: 8)
 
-                    TabView(selection: $selectedPage) {
-                        ArtworkView(track: player.currentTrack, size: 282, cornerRadius: 30)
-                            .rotationEffect(.degrees(player.isPlaying ? 360 : 0))
-                            .animation(
-                                player.isPlaying
-                                    ? .linear(duration: 24).repeatForever(autoreverses: false)
-                                    : .default,
-                                value: player.isPlaying
+                    if player.isVideo {
+                        VideoPlayer(player: player.playbackPlayer)
+                            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                            .overlay { RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(.white.opacity(0.12)) }
+                            .padding(.horizontal, 20)
+                            .frame(height: 310)
+                    } else {
+                        TabView(selection: $selectedPage) {
+                            ArtworkView(track: player.currentTrack, size: 282, cornerRadius: 30)
+                                .rotationEffect(.degrees(player.isPlaying ? 360 : 0))
+                                .animation(
+                                    player.isPlaying
+                                        ? .linear(duration: 24).repeatForever(autoreverses: false)
+                                        : .default,
+                                    value: player.isPlaying
+                                )
+                                .tag(0)
+                            SyncedLyricsView(
+                                lyrics: player.currentTrack?.lyrics,
+                                currentTime: player.currentTime,
+                                duration: player.duration,
+                                emptyText: settings.text("noLyrics"),
+                                onSeek: player.seek,
+                                onShowArtwork: { withAnimation { selectedPage = 0 } }
                             )
-                            .tag(0)
-                        SyncedLyricsView(
-                            lyrics: player.currentTrack?.lyrics,
-                            currentTime: player.currentTime,
-                            duration: player.duration,
-                            emptyText: settings.text("noLyrics"),
-                            onSeek: player.seek,
-                            onShowArtwork: { withAnimation { selectedPage = 0 } }
-                        )
-                        .padding(.horizontal, 24)
-                        .tag(1)
+                            .padding(.horizontal, 24)
+                            .tag(1)
+                        }
+                        .tabViewStyle(.page(indexDisplayMode: .automatic))
+                        .frame(height: 310)
                     }
-                    .tabViewStyle(.page(indexDisplayMode: .automatic))
-                    .frame(height: 310)
 
                     VStack(spacing: 7) {
-                        Text(player.currentTrack?.title ?? "Not Playing")
+                        Text(player.currentTitle.isEmpty ? "Not Playing" : player.currentTitle)
                             .font(.title2.bold())
                             .lineLimit(1)
-                        Text(player.currentTrack?.artist ?? "")
+                        Text(player.currentArtist)
                             .font(.body)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                        Text(player.currentTrack?.albumName ?? "")
+                        Text(player.currentTrack?.albumName ?? (player.isVideo ? settings.text("video") : ""))
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)

@@ -1,4 +1,3 @@
-import AVKit
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -9,7 +8,6 @@ struct HomeView: View {
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var rankingTab: MediaLibraryTab = .songs
-    @State private var selectedVideo: LocalVideo?
 
     var body: some View {
         NavigationStack {
@@ -61,7 +59,7 @@ struct HomeView: View {
                         } else {
                             let topVideos = dataStore.topVideos(from: library.videos)
                             ForEach(Array(topVideos.enumerated()), id: \.element.id) { index, video in
-                                Button { player.pause(); selectedVideo = video } label: {
+                                Button { player.play(video, in: library.videos) } label: {
                                     HStack(spacing: 12) {
                                         Text("\(index + 1)")
                                             .font(.headline.monospacedDigit()).foregroundStyle(.secondary)
@@ -90,7 +88,6 @@ struct HomeView: View {
             }
             .scrollContentBackground(.hidden)
         }
-        .sheet(item: $selectedVideo) { LocalVideoPlayerSheet(video: $0) }
     }
 
     private func emptyCard(text: String) -> some View {
@@ -118,7 +115,6 @@ struct SongsView: View {
     @State private var deletingTrack: Track?
     @State private var editedName = ""
     @State private var mediaTab: MediaLibraryTab = .songs
-    @State private var selectedVideo: LocalVideo?
     @State private var editingVideo: LocalVideo?
     @State private var deletingVideo: LocalVideo?
     @State private var editedVideoTitle = ""
@@ -184,7 +180,7 @@ struct SongsView: View {
                         List {
                             ForEach(library.videos) { video in
                                 HStack(spacing: 12) {
-                                    Button { player.pause(); selectedVideo = video } label: {
+                                    Button { player.play(video, in: library.videos) } label: {
                                         HStack(spacing: 13) {
                                             Image(systemName: "play.rectangle.fill").font(.title2).foregroundStyle(.purple).frame(width: 50)
                                             VStack(alignment: .leading, spacing: 4) {
@@ -225,7 +221,6 @@ struct SongsView: View {
                     renamingTrack = nil
                 }
             }
-            .sheet(item: $selectedVideo) { LocalVideoPlayerSheet(video: $0) }
             .sheet(item: $editingVideo) { video in
                 EditTrackInfoSheet(title: $editedVideoTitle, artist: $editedVideoArtist, titleKey: "editVideoInfo", nameKey: "videoName") {
                     library.updateVideoInfo(id: video.id, title: editedVideoTitle, artist: editedVideoArtist)
@@ -462,7 +457,6 @@ struct ArtistDetailView: View {
     @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
-    @State private var selectedVideo: LocalVideo?
 
     var body: some View {
         ScrollView {
@@ -494,7 +488,7 @@ struct ArtistDetailView: View {
                         Label(settings.text("noVideos"), systemImage: "video.slash").foregroundStyle(.secondary)
                     } else {
                         ForEach(artist.videos) { video in
-                            Button { player.pause(); selectedVideo = video } label: {
+                            Button { player.play(video, in: artist.videos) } label: {
                                 HStack(spacing: 13) {
                                     Image(systemName: "play.rectangle.fill").font(.title2).foregroundStyle(.purple)
                                     VStack(alignment: .leading, spacing: 4) {
@@ -516,7 +510,6 @@ struct ArtistDetailView: View {
             .padding(.bottom, 110)
         }
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $selectedVideo) { LocalVideoPlayerSheet(video: $0) }
     }
 
     private func queueButtons(tracks: [Track]) -> some View {
@@ -916,29 +909,6 @@ private struct ManagePlaylistSongsView: View {
                 ToolbarItem(placement: .topBarTrailing) { Button(settings.text("done")) { dismiss() } }
             }
         }
-    }
-}
-
-struct LocalVideoPlayerSheet: View {
-    let video: LocalVideo
-    @EnvironmentObject private var dataStore: MusicDataStore
-    @State private var player: AVPlayer
-
-    init(video: LocalVideo) {
-        self.video = video
-        _player = State(initialValue: AVPlayer(url: video.fileURL))
-    }
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            VideoPlayer(player: player)
-        }
-        .onAppear {
-            dataStore.recordPlay(trackID: video.id)
-            player.play()
-        }
-        .onDisappear { player.pause() }
     }
 }
 

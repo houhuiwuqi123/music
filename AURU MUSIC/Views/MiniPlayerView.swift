@@ -5,16 +5,24 @@ struct MiniPlayerView: View {
     let onExpand: () -> Void
 
     var body: some View {
-        if let track = player.currentTrack {
+        if player.hasCurrentMedia {
             Button(action: onExpand) {
                 HStack(spacing: 12) {
-                    ArtworkView(track: track, size: 46, cornerRadius: 10)
+                    if let track = player.currentTrack {
+                        ArtworkView(track: track, size: 46, cornerRadius: 10)
+                    } else {
+                        Image(systemName: "play.rectangle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.purple)
+                            .frame(width: 46, height: 46)
+                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    }
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(track.title)
+                        Text(player.currentTitle)
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(1)
-                        Text(track.artist)
+                        Text(player.currentArtist)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
