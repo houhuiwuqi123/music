@@ -35,20 +35,42 @@ struct TrackRow: View {
     let track: Track
     var trailingText: String? = nil
     let action: () -> Void
+    @EnvironmentObject private var player: MusicPlayerViewModel
+
+    private var isCurrentTrack: Bool { player.currentTrack?.id == track.id }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 13) {
                 ArtworkView(track: track, size: 50, cornerRadius: 14)
+                    .overlay {
+                        if isCurrentTrack {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.purple, lineWidth: 2)
+                        }
+                    }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(track.title).font(.body.weight(.semibold)).lineLimit(1)
+                    Text(track.title)
+                        .font(.body.weight(isCurrentTrack ? .bold : .semibold))
+                        .foregroundStyle(isCurrentTrack ? Color.purple : Color.primary)
+                        .lineLimit(1)
                     Text(track.artist).font(.caption.weight(.medium)).foregroundStyle(.white.opacity(0.68)).lineLimit(1)
                 }
                 Spacer(minLength: 8)
                 if let trailingText {
                     Text(trailingText).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
                 }
-                Image(systemName: "play.fill").font(.caption).foregroundStyle(.secondary)
+                Image(systemName: isCurrentTrack ? (player.isPlaying ? "waveform" : "pause.fill") : "play.fill")
+                    .font(.caption.weight(isCurrentTrack ? .bold : .regular))
+                    .foregroundStyle(isCurrentTrack ? Color.purple : Color.secondary)
+            }
+            .padding(.horizontal, isCurrentTrack ? 8 : 0)
+            .padding(.vertical, isCurrentTrack ? 6 : 0)
+            .background {
+                if isCurrentTrack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.purple.opacity(0.12))
+                }
             }
             .contentShape(Rectangle())
         }

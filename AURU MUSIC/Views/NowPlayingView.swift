@@ -162,6 +162,7 @@ private struct SyncedLyricsView: View {
     @State private var draggedTime: TimeInterval?
     @State private var dragUpdateToken = 0
     @State private var lastScrubSeekUptime: TimeInterval = 0
+    @State private var lastScrubbedLineID: Int?
 
     init(
         lyrics: String?,
@@ -197,7 +198,7 @@ private struct SyncedLyricsView: View {
                         .frame(maxWidth: .infinity, minHeight: 270)
                 } else {
                     LazyVStack(spacing: 18) {
-                        Color.clear.frame(height: 100)
+                        Color.clear.frame(height: 150)
                         ForEach(lines) { line in
                             Button {
                                 guard line.time.isFinite else { return }
@@ -205,21 +206,21 @@ private struct SyncedLyricsView: View {
                                 withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(line.id, anchor: .center) }
                             } label: {
                                 Text(line.text)
-                                    .font(activeLineID == line.id ? .title3.bold() : .body)
+                                    .font(activeLineID == line.id ? .title2.bold() : .body)
                                     .foregroundStyle(activeLineID == line.id ? Color.primary : Color.secondary)
                                     .multilineTextAlignment(.center)
-                                    .scaleEffect(activeLineID == line.id ? 1 : 0.94)
+                                    .scaleEffect(activeLineID == line.id ? 1.04 : 0.92)
                                     .animation(.easeInOut(duration: 0.25), value: activeLineID)
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.plain)
                             .id(line.id)
                         }
-                        Color.clear.frame(height: 100)
+                        Color.clear.frame(height: 150)
                     }
                 }
             }
-            .scrollDisabled(lines.isEmpty)
+            .scrollDisabled(lines.isEmpty || hasTimedLyrics)
             .onChange(of: activeLineID) { id in
                 guard let id, !isDragging, !scrubGestureIsActive else { return }
                 withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(id, anchor: .center) }
@@ -248,6 +249,10 @@ private struct SyncedLyricsView: View {
                         let token = dragUpdateToken
                         let target = min(max(dragStartTime - Double(value.translation.height) * 0.12, 0), max(duration, 0))
                         draggedTime = target
+                        if let targetID = lineID(at: target), targetID != lastScrubbedLineID {
+                            lastScrubbedLineID = targetID
+                            withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(targetID, anchor: .center) }
+                        }
                         let now = ProcessInfo.processInfo.systemUptime
                         if now - lastScrubSeekUptime >= 0.08 || target == 0 || target == duration {
                             lastScrubSeekUptime = now
@@ -302,7 +307,13 @@ private struct SyncedLyricsView: View {
         isDragging = false
         isDragSettled = false
         lastScrubSeekUptime = 0
+        lastScrubbedLineID = nil
         dragUpdateToken += 1
+    }
+
+    private func lineID(at time: TimeInterval) -> Int? {
+        lines.last(where: { $0.time.isFinite && $0.time <= time + 0.05 })?.id
+            ?? lines.first(where: { $0.time.isFinite })?.id
     }
 
     private static func parse(_ source: String) -> [LyricLine] {

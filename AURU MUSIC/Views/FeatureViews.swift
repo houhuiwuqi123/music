@@ -428,7 +428,7 @@ struct ArtistsView: View {
                                         ArtworkView(track: artist.tracks.first, size: 50, cornerRadius: 14)
                                         VStack(alignment: .leading, spacing: 5) {
                                             Text(artist.name).font(.headline)
-                                            Text("\(artist.tracks.count) \(settings.text("tracks")) · \(artist.videos.count) \(settings.text("videos"))").font(.caption).foregroundStyle(.secondary)
+                                            Text("\(artist.tracks.count) \(settings.text("tracks"))").font(.caption).foregroundStyle(.secondary)
                                         }
                                         Spacer()
                                     }
@@ -483,7 +483,7 @@ struct ArtistDetailView: View {
                 .padding(18)
                 .glassCard()
                 VStack(alignment: .leading, spacing: 3) {
-                    SectionHeader(title: settings.text("musicVideos"), subtitle: "\(artist.videos.count)")
+                    SectionHeader(title: settings.text("musicVideos"))
                     if artist.videos.isEmpty {
                         Label(settings.text("noVideos"), systemImage: "video.slash").foregroundStyle(.secondary)
                     } else {
