@@ -74,22 +74,26 @@ private struct MarqueeText: View {
     let font: Font
     @State private var textWidth: CGFloat = 0
     @State private var containerWidth: CGFloat = 0
+    @State private var animationStart = Date()
 
     var body: some View {
         GeometryReader { proxy in
             TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
                 let overflow = max(textWidth - containerWidth, 0)
-                let travel = overflow + 36
-                let cycle = max(Double(travel / 26) + 1.4, 1.4)
-                let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: cycle)
-                let offset = overflow > 0 ? -CGFloat(max(phase - 0.7, 0) / max(cycle - 0.7, 0.1)) * travel : 0
-                HStack(spacing: 36) {
-                    measuredText
-                    if overflow > 0 { measuredText }
-                }
-                .offset(x: offset)
+                let leadingPause = 0.8
+                let trailingPause = 1.0
+                let travelDuration = max(Double(overflow / 26), 0.1)
+                let cycle = leadingPause + travelDuration + trailingPause
+                let elapsed = max(timeline.date.timeIntervalSince(animationStart), 0)
+                let phase = elapsed.truncatingRemainder(dividingBy: cycle)
+                let progress = min(max((phase - leadingPause) / travelDuration, 0), 1)
+                measuredText
+                    .offset(x: overflow > 0 ? -overflow * CGFloat(progress) : 0)
             }
-            .onAppear { containerWidth = proxy.size.width }
+            .onAppear {
+                containerWidth = proxy.size.width
+                animationStart = Date()
+            }
             .onChange(of: proxy.size.width) { containerWidth = $0 }
         }
         .clipped()

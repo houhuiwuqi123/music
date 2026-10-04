@@ -122,7 +122,7 @@ private enum TrackSortOption: String, CaseIterable, Identifiable {
         switch self {
         case .title: return "textformat"
         case .artist: return "person"
-        case .newestAdded: return "clock.badge.plus"
+        case .newestAdded: return "plus.circle"
         case .recentlyPlayed: return "clock.arrow.circlepath"
         case .mostPlayed: return "chart.bar.fill"
         }
@@ -151,6 +151,68 @@ private enum TrackSortOption: String, CaseIterable, Identifiable {
                     ? lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
                     : lhsCount > rhsCount
             }
+        }
+    }
+}
+
+private enum ArtistSortOption: String, CaseIterable, Identifiable {
+    case name, newestAdded, recentlyPlayed
+
+    var id: String { rawValue }
+    var textKey: String {
+        switch self {
+        case .name: return "sortArtist"
+        case .newestAdded: return "sortNewestAdded"
+        case .recentlyPlayed: return "sortRecentlyPlayed"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .name: return "person"
+        case .newestAdded: return "plus.circle"
+        case .recentlyPlayed: return "clock.arrow.circlepath"
+        }
+    }
+
+    @MainActor
+    func sorted(_ artists: [Artist], using dataStore: MusicDataStore) -> [Artist] {
+        artists.sorted { lhs, rhs in
+            switch self {
+            case .name:
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            case .newestAdded:
+                let lhsDate = lhs.tracks.compactMap(\.addedAt).max() ?? .distantPast
+                let rhsDate = rhs.tracks.compactMap(\.addedAt).max() ?? .distantPast
+                return lhsDate == rhsDate
+                    ? lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                    : lhsDate > rhsDate
+            case .recentlyPlayed:
+                let lhsDate = (lhs.tracks.map(\.id) + lhs.videos.map(\.id))
+                    .compactMap { dataStore.playStats[$0]?.lastPlayedAt }.max() ?? .distantPast
+                let rhsDate = (rhs.tracks.map(\.id) + rhs.videos.map(\.id))
+                    .compactMap { dataStore.playStats[$0]?.lastPlayedAt }.max() ?? .distantPast
+                return lhsDate == rhsDate
+                    ? lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                    : lhsDate > rhsDate
+            }
+        }
+    }
+}
+
+private struct ArtistSortMenu: View {
+    @Binding var selection: ArtistSortOption
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        Menu {
+            Picker(settings.text("sortBy"), selection: $selection) {
+                ForEach(ArtistSortOption.allCases) { option in
+                    Label(settings.text(option.textKey), systemImage: option.icon).tag(option)
+                }
+            }
+        } label: {
+            Label(settings.text(selection.textKey), systemImage: "arrow.up.arrow.down")
+                .font(.caption.weight(.semibold))
         }
     }
 }
@@ -493,11 +555,20 @@ struct ArtistsView: View {
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var navigationPath: [Artist] = []
+    @State private var artistSort: ArtistSortOption = .name
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
-            let artists = dataStore.artists(from: library.tracks, videos: library.videos)
-            Group {
+            let artists = artistSort.sorted(dataStore.artists(from: library.tracks, videos: library.videos), using: dataStore)
+            VStack(spacing: 0) {
+                if !artists.isEmpty {
+                    HStack {
+                        Spacer()
+                        ArtistSortMenu(selection: $artistSort)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 5)
+                }
                 if artists.isEmpty {
                     Color.clear
                 } else {
@@ -538,7 +609,6 @@ struct ArtistDetailView: View {
     @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
-    @State private var trackSort: TrackSortOption = .title
     @State private var detailTrack: Track?
     @State private var renamingTrack: Track?
     @State private var deletingTrack: Track?
@@ -546,7 +616,7 @@ struct ArtistDetailView: View {
 
     private var currentArtistTracks: [Track] {
         let tracks = library.tracks.filter { $0.artist == artist.name }
-        return trackSort.sorted(tracks, using: dataStore)
+        return tracks.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
     var body: some View {
@@ -556,10 +626,7 @@ struct ArtistDetailView: View {
                 Text(artist.name).font(.largeTitle.bold())
                 queueButtons(tracks: currentArtistTracks)
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        SectionHeader(title: settings.text("songsSection"))
-                        TrackSortMenu(selection: $trackSort)
-                    }
+                    SectionHeader(title: settings.text("songsSection"))
                     ForEach(currentArtistTracks) { track in
                         HStack(spacing: 10) {
                             TrackRow(track: track, trailingText: track.duration.musicTime) {
@@ -593,8 +660,11 @@ struct ArtistDetailView: View {
                                     .font(.title3.bold())
                                     .frame(width: 34, height: 40)
                                     .foregroundStyle(.secondary)
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .fixedSize()
+                            .zIndex(1)
                         }
                         .padding(.vertical, 10)
                     }

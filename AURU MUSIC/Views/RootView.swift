@@ -35,6 +35,8 @@ struct RootView: View {
                     PlaylistsView().tag(Tab.playlists).tabItem { Label(settings.text("playlists"), systemImage: "rectangle.stack.fill") }
                 }
                 .tint(.purple)
+                .toolbarBackground(Color(red: 0.025, green: 0.03, blue: 0.055), for: .tabBar)
+                .toolbarBackground(.visible, for: .tabBar)
             }
             .padding(.top, 8)
 

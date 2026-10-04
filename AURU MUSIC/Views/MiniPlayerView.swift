@@ -43,7 +43,13 @@ struct MiniPlayerView: View {
                             Text(settings.text("noPlaylists"))
                         } else {
                             ForEach(dataStore.playlists) { playlist in
-                                Button(playlist.name) { dataStore.add(track.id, to: playlist.id) }
+                                Button { dataStore.add(track.id, to: playlist.id) } label: {
+                                    if playlist.trackIDs.contains(track.id) {
+                                        Label(playlist.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(playlist.name)
+                                    }
+                                }
                             }
                         }
                     } label: {
