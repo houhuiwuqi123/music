@@ -292,7 +292,13 @@ struct SongsView: View {
                                             if !dataStore.playlists.isEmpty {
                                                 Menu(settings.text("addPlaylist")) {
                                                     ForEach(dataStore.playlists) { playlist in
-                                                        Button(playlist.name) { dataStore.add(track.id, to: playlist.id) }
+                                                        Button { dataStore.add(track.id, to: playlist.id) } label: {
+                                                            if playlist.trackIDs.contains(track.id) {
+                                                                Label(playlist.name, systemImage: "checkmark")
+                                                            } else {
+                                                                Text(playlist.name)
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -639,7 +645,13 @@ struct ArtistDetailView: View {
                                 if !dataStore.playlists.isEmpty {
                                     Menu(settings.text("addPlaylist")) {
                                         ForEach(dataStore.playlists) { playlist in
-                                            Button(playlist.name) { dataStore.add(track.id, to: playlist.id) }
+                                            Button { dataStore.add(track.id, to: playlist.id) } label: {
+                                                if playlist.trackIDs.contains(track.id) {
+                                                    Label(playlist.name, systemImage: "checkmark")
+                                                } else {
+                                                    Text(playlist.name)
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -897,7 +909,13 @@ struct PlaylistDetailView: View {
                                 if !dataStore.playlists.isEmpty {
                                     Menu(settings.text("addPlaylist")) {
                                         ForEach(dataStore.playlists) { destination in
-                                            Button(destination.name) { dataStore.add(track.id, to: destination.id) }
+                                            Button { dataStore.add(track.id, to: destination.id) } label: {
+                                                if destination.trackIDs.contains(track.id) {
+                                                    Label(destination.name, systemImage: "checkmark")
+                                                } else {
+                                                    Text(destination.name)
+                                                }
+                                            }
                                         }
                                     }
                                 }
