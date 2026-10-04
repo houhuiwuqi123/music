@@ -20,7 +20,7 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 - Song deletion asks whether to hide the song from the library while keeping its sandbox file or permanently delete the app's local copy.
 - Music and playlist rows support native full-swipe deletion with confirmation choices.
 - Empty artist and playlist data no longer render empty glass cards.
-- The app icon asset is configured at `MusicPlayer/Assets.xcassets/AppIcon.appiconset/AppIcon.png`.
+- The app icon asset is configured at `AURU MUSIC/Assets.xcassets/AppIcon.appiconset/AppIcon.png`.
 - Reads embedded lyrics and supports uploaded UTF-8 LRC/text lyrics with synchronized scrolling in Now Playing.
 - Cleans deleted songs out of playlists and playback statistics automatically.
 - Shows local videos in global search and on the matching artist page, then plays them with the system video player.
@@ -58,7 +58,7 @@ The project enables both `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsI
 
 ## Structure
 
-- `Models/Track.swift` — persisted audio model and duration formatting.
+- `AURU MUSIC/Models/Track.swift` — persisted audio model and duration formatting.
 - `Models/Playlist.swift` — playlist, artist grouping, and play-stat models.
 - `Services/LocalMusicLibrary.swift` — document import, sandbox copying, metadata, persistence, and deletion.
 - `Services/MusicDataStore.swift` — persistent playlists, recent history, and rankings.
