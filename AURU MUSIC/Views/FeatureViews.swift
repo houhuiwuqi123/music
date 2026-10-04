@@ -127,6 +127,17 @@ struct SongsView: View {
     var body: some View {
         NavigationStack(path: $navigationPath) {
             VStack(spacing: 0) {
+                Picker(settings.text("songs"), selection: $mediaTab) {
+                    Text(settings.text("songTab")).tag(MediaLibraryTab.songs)
+                    Text(settings.text("videoTab")).tag(MediaLibraryTab.videos)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(.ultraThinMaterial)
+                .zIndex(1)
+
                 Group {
                     if mediaTab == .songs {
                         if library.tracks.isEmpty {
@@ -204,16 +215,7 @@ struct SongsView: View {
                         .listStyle(.plain).scrollContentBackground(.hidden)
                     }
                 }
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    Picker(settings.text("songs"), selection: $mediaTab) {
-                        Text(settings.text("songTab")).tag(MediaLibraryTab.songs)
-                        Text(settings.text("videoTab")).tag(MediaLibraryTab.videos)
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(.ultraThinMaterial)
-                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 160) }
             }
             .navigationDestination(for: Track.self) { TrackDetailView(trackID: $0.id) }
