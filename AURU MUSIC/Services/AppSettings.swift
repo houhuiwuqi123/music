@@ -87,7 +87,8 @@ final class AppSettings: ObservableObject {
             "startRecognizing": ("开始识别", "Start Listening"),
             "stopRecognizing": ("停止识别", "Stop Listening"),
             "noRecognition": ("暂未识别到歌曲，请重试", "No song identified yet. Try again."),
-            "microphoneDenied": ("需要麦克风权限才能听歌识曲", "Microphone access is required to recognize music")
+            "microphoneDenied": ("需要麦克风权限才能听歌识曲", "Microphone access is required to recognize music"),
+            "recognitionDevelopmentDisabled": ("开发测试阶段暂未启用听歌识曲。", "Music recognition is temporarily disabled in development builds.")
         ]
         guard let value = translations[key] else { return key }
         return language == .chinese ? value.zh : value.en

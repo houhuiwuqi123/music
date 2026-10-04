@@ -1,5 +1,7 @@
+#if AURU_ENABLE_SHAZAM
 import AVFoundation
 import ShazamKit
+#endif
 import SwiftUI
 import UIKit
 import Vision
@@ -95,9 +97,10 @@ struct FeedSupportView: View {
     }
 }
 
+#if AURU_ENABLE_SHAZAM
 @MainActor
 final class SongRecognitionService: NSObject, ObservableObject, SHSessionDelegate {
-    enum State: Equatable { case idle, listening, found, failed(String), denied }
+    enum State: Equatable { case idle, listening, found, failed(String), denied, unavailable }
 
     @Published private(set) var state: State = .idle
     @Published private(set) var title = ""
@@ -224,6 +227,25 @@ final class SongRecognitionService: NSObject, ObservableObject, SHSessionDelegat
         var errorDescription: String? { "Microphone audio format is unavailable." }
     }
 }
+#else
+@MainActor
+final class SongRecognitionService: ObservableObject {
+    enum State: Equatable { case idle, listening, found, failed(String), denied, unavailable }
+
+    @Published private(set) var state: State = .idle
+    @Published private(set) var title = ""
+    @Published private(set) var artist = ""
+    @Published private(set) var artworkURL: URL?
+
+    func toggle() {
+        state = state == .unavailable ? .idle : .unavailable
+    }
+
+    func stop() {
+        if state == .listening { state = .idle }
+    }
+}
+#endif
 
 struct SongRecognitionView: View {
     @EnvironmentObject private var settings: AppSettings
@@ -326,6 +348,10 @@ struct SongRecognitionView: View {
             .foregroundStyle(.secondary).multilineTextAlignment(.center)
         case .denied:
             Text(settings.text("microphoneDenied")).foregroundStyle(.orange).multilineTextAlignment(.center)
+        case .unavailable:
+            Text(settings.text("recognitionDevelopmentDisabled"))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         case .idle:
             Text(settings.text("recognizeHint")).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
