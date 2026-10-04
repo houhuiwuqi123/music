@@ -664,12 +664,15 @@ struct ArtistDetailView: View {
                             }
                             .buttonStyle(.plain)
                             .fixedSize()
+                            .layoutPriority(2)
                             .zIndex(1)
                         }
+                        .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
                     }
                 }
                 .padding(18)
+                .frame(maxWidth: .infinity)
                 .glassCard()
                 VStack(alignment: .leading, spacing: 3) {
                     SectionHeader(title: settings.text("musicVideos"))
@@ -847,6 +850,9 @@ struct PlaylistDetailView: View {
     @State private var showsRename = false
     @State private var showsDeleteOptions = false
     @State private var editedPlaylistName = ""
+    @State private var detailTrack: Track?
+    @State private var renamingTrack: Track?
+    @State private var editedTrackName = ""
 
     var playlist: Playlist? { dataStore.playlists.first(where: { $0.id == playlistID }) }
     var tracks: [Track] { playlist.map { dataStore.tracks(in: $0, library: library.tracks) } ?? [] }
@@ -881,12 +887,50 @@ struct PlaylistDetailView: View {
                 .disabled(tracks.isEmpty)
                 VStack(spacing: 3) {
                     ForEach(tracks) { track in
-                        TrackRow(track: track, trailingText: track.duration.musicTime) { player.play(track, in: tracks) }
-                            .padding(.vertical, 10)
-                            .contextMenu { Button(settings.text("removePlaylist"), role: .destructive) { dataStore.remove(track.id, from: playlistID) } }
+                        HStack(spacing: 10) {
+                            TrackRow(track: track, trailingText: track.duration.musicTime) {
+                                player.play(track, in: tracks)
+                            }
+                            Menu {
+                                Button { detailTrack = track } label: {
+                                    Label(settings.text("details"), systemImage: "info.circle")
+                                }
+                                if !dataStore.playlists.isEmpty {
+                                    Menu(settings.text("addPlaylist")) {
+                                        ForEach(dataStore.playlists) { destination in
+                                            Button(destination.name) { dataStore.add(track.id, to: destination.id) }
+                                        }
+                                    }
+                                }
+                                Button { player.insertNext(track) } label: {
+                                    Label(settings.text("playNext"), systemImage: "text.line.first.and.arrowtriangle.forward")
+                                }
+                                Button {
+                                    editedTrackName = track.title
+                                    renamingTrack = track
+                                } label: {
+                                    Label(settings.text("rename"), systemImage: "pencil")
+                                }
+                                Button(role: .destructive) { dataStore.remove(track.id, from: playlistID) } label: {
+                                    Label(settings.text("removePlaylist"), systemImage: "minus.circle")
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis")
+                                    .font(.title3.bold())
+                                    .frame(width: 34, height: 40)
+                                    .foregroundStyle(.secondary)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .fixedSize()
+                            .layoutPriority(2)
+                            .zIndex(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
                     }
                 }
-                .padding(18).glassCard()
+                .padding(18).frame(maxWidth: .infinity).glassCard()
             }
             .padding(18).padding(.bottom, 110)
         }
@@ -907,6 +951,15 @@ struct PlaylistDetailView: View {
         }
         .sheet(isPresented: $showsSongManager) {
             ManagePlaylistSongsView(playlistID: playlistID)
+        }
+        .sheet(item: $detailTrack) { track in
+            NavigationStack { TrackDetailView(trackID: track.id) }
+        }
+        .sheet(item: $renamingTrack) { track in
+            RenameTrackSheet(name: $editedTrackName) {
+                library.renameTrack(id: track.id, to: editedTrackName)
+                renamingTrack = nil
+            }
         }
         .sheet(isPresented: $showsRename) {
             RenamePlaylistSheet(name: $editedPlaylistName) {

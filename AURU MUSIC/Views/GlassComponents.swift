@@ -81,14 +81,18 @@ private struct MarqueeText: View {
             TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
                 let overflow = max(textWidth - containerWidth, 0)
                 let leadingPause = 0.8
-                let trailingPause = 1.0
-                let travelDuration = max(Double(overflow / 26), 0.1)
-                let cycle = leadingPause + travelDuration + trailingPause
+                let spacing: CGFloat = 36
+                let travel = textWidth + spacing
+                let travelDuration = max(Double(travel / 26), 0.1)
+                let cycle = leadingPause + travelDuration
                 let elapsed = max(timeline.date.timeIntervalSince(animationStart), 0)
                 let phase = elapsed.truncatingRemainder(dividingBy: cycle)
                 let progress = min(max((phase - leadingPause) / travelDuration, 0), 1)
-                measuredText
-                    .offset(x: overflow > 0 ? -overflow * CGFloat(progress) : 0)
+                HStack(spacing: spacing) {
+                    measuredText
+                    if overflow > 0 { measuredText }
+                }
+                .offset(x: overflow > 0 ? -travel * CGFloat(progress) : 0)
             }
             .onAppear {
                 containerWidth = proxy.size.width
