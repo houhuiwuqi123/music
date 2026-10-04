@@ -152,11 +152,31 @@ private struct SyncedLyricsView: View {
     let emptyText: String
     let onSeek: (TimeInterval) -> Void
     let onShowArtwork: () -> Void
+    private let lines: [LyricLine]
     @State private var isDragging = false
+    @State private var isDragSettled = false
     @State private var dragStartTime: TimeInterval = 0
     @State private var draggedTime: TimeInterval?
+    @State private var dragUpdateToken = 0
 
-    private var lines: [LyricLine] { Self.parse(lyrics ?? "") }
+    init(
+        lyrics: String?,
+        currentTime: TimeInterval,
+        duration: TimeInterval,
+        emptyText: String,
+        onSeek: @escaping (TimeInterval) -> Void,
+        onShowArtwork: @escaping () -> Void
+    ) {
+        self.lyrics = lyrics
+        self.currentTime = currentTime
+        self.duration = duration
+        self.emptyText = emptyText
+        self.onSeek = onSeek
+        self.onShowArtwork = onShowArtwork
+        lines = Self.parse(lyrics ?? "")
+    }
+
+    private var hasTimedLyrics: Bool { lines.contains(where: { $0.time.isFinite }) }
     private var displayTime: TimeInterval { draggedTime ?? currentTime }
     private var activeLineID: Int? {
         lines.last(where: { $0.time.isFinite && $0.time <= displayTime + 0.05 })?.id
@@ -193,34 +213,31 @@ private struct SyncedLyricsView: View {
                     }
                 }
             }
+            .scrollDisabled(lines.isEmpty)
             .onChange(of: activeLineID) { id in
                 guard let id, !isDragging else { return }
                 withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(id, anchor: .center) }
             }
-            .overlay {
-                if isDragging {
-                    HStack(spacing: 10) {
-                        Rectangle().fill(Color.purple).frame(height: 1)
-                        Text(displayTime.musicTime)
-                            .font(.caption.bold().monospacedDigit())
-                            .foregroundStyle(.purple)
-                        Image(systemName: "play.fill").font(.caption).foregroundStyle(.purple)
-                        Rectangle().fill(Color.purple).frame(height: 1)
-                    }
-                    .transition(.opacity)
-                }
-            }
+            .overlay { scrubIndicator }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { value in
                         guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                        guard hasTimedLyrics, duration > 0 else { return }
                         if !isDragging {
                             isDragging = true
                             dragStartTime = currentTime
                         }
+                        isDragSettled = false
+                        dragUpdateToken += 1
+                        let token = dragUpdateToken
                         let target = min(max(dragStartTime - Double(value.translation.height) * 0.12, 0), max(duration, 0))
                         draggedTime = target
-                        onSeek(target)
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(140))
+                            guard isDragging, token == dragUpdateToken else { return }
+                            withAnimation(.easeOut(duration: 0.16)) { isDragSettled = true }
+                        }
                     }
                     .onEnded { value in
                         guard isDragging else {
@@ -232,10 +249,35 @@ private struct SyncedLyricsView: View {
                         if let draggedTime { onSeek(draggedTime) }
                         self.draggedTime = nil
                         isDragging = false
+                        isDragSettled = false
+                        dragUpdateToken += 1
                     }
             )
         }
         .mask(LinearGradient(colors: [.clear, .black, .black, .clear], startPoint: .top, endPoint: .bottom))
+    }
+
+    @ViewBuilder private var scrubIndicator: some View {
+        if isDragging {
+            HStack(spacing: 10) {
+                Rectangle()
+                    .fill(Color.purple.opacity(isDragSettled ? 0.72 : 0.22))
+                    .frame(height: 1)
+                HStack(spacing: 6) {
+                    Text(displayTime.musicTime)
+                        .font(.caption.bold().monospacedDigit())
+                    Image(systemName: "play.fill").font(.caption)
+                }
+                .foregroundStyle(Color.purple.opacity(isDragSettled ? 1 : 0.48))
+                .frame(width: 150)
+                Rectangle()
+                    .fill(Color.purple.opacity(isDragSettled ? 0.72 : 0.22))
+                    .frame(height: 1)
+            }
+            .animation(.easeOut(duration: 0.12), value: isDragSettled)
+            .transition(.opacity)
+            .allowsHitTesting(false)
+        }
     }
 
     private static func parse(_ source: String) -> [LyricLine] {
