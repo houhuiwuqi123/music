@@ -9,6 +9,7 @@ struct Track: Identifiable, Codable, Hashable {
     var fileURL: URL
     var artworkData: Data?
     var lyrics: String?
+    var addedAt: Date?
     var titleWasEdited: Bool?
     var artistWasEdited: Bool?
     var artworkWasEdited: Bool?
@@ -23,6 +24,7 @@ struct Track: Identifiable, Codable, Hashable {
         fileURL: URL,
         artworkData: Data? = nil,
         lyrics: String? = nil,
+        addedAt: Date? = Date(),
         titleWasEdited: Bool? = nil,
         artistWasEdited: Bool? = nil,
         artworkWasEdited: Bool? = nil,
@@ -36,6 +38,7 @@ struct Track: Identifiable, Codable, Hashable {
         self.fileURL = fileURL
         self.artworkData = artworkData
         self.lyrics = lyrics
+        self.addedAt = addedAt
         self.titleWasEdited = titleWasEdited
         self.artistWasEdited = artistWasEdited
         self.artworkWasEdited = artworkWasEdited

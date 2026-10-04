@@ -105,6 +105,73 @@ private enum MediaLibraryTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private enum TrackSortOption: String, CaseIterable, Identifiable {
+    case title, artist, newestAdded, recentlyPlayed, mostPlayed
+
+    var id: String { rawValue }
+    var textKey: String {
+        switch self {
+        case .title: return "sortTitle"
+        case .artist: return "sortArtist"
+        case .newestAdded: return "sortNewestAdded"
+        case .recentlyPlayed: return "sortRecentlyPlayed"
+        case .mostPlayed: return "sortMostPlayed"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .title: return "textformat"
+        case .artist: return "person"
+        case .newestAdded: return "clock.badge.plus"
+        case .recentlyPlayed: return "clock.arrow.circlepath"
+        case .mostPlayed: return "chart.bar.fill"
+        }
+    }
+
+    func sorted(_ tracks: [Track], using dataStore: MusicDataStore) -> [Track] {
+        tracks.sorted { lhs, rhs in
+            switch self {
+            case .title:
+                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            case .artist:
+                let comparison = lhs.artist.localizedCaseInsensitiveCompare(rhs.artist)
+                return comparison == .orderedSame
+                    ? lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+                    : comparison == .orderedAscending
+            case .newestAdded:
+                return (lhs.addedAt ?? .distantPast) > (rhs.addedAt ?? .distantPast)
+            case .recentlyPlayed:
+                return (dataStore.playStats[lhs.id]?.lastPlayedAt ?? .distantPast)
+                    > (dataStore.playStats[rhs.id]?.lastPlayedAt ?? .distantPast)
+            case .mostPlayed:
+                let lhsCount = dataStore.playCount(for: lhs.id)
+                let rhsCount = dataStore.playCount(for: rhs.id)
+                return lhsCount == rhsCount
+                    ? lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+                    : lhsCount > rhsCount
+            }
+        }
+    }
+}
+
+private struct TrackSortMenu: View {
+    @Binding var selection: TrackSortOption
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        Menu {
+            Picker(settings.text("sortBy"), selection: $selection) {
+                ForEach(TrackSortOption.allCases) { option in
+                    Label(settings.text(option.textKey), systemImage: option.icon).tag(option)
+                }
+            }
+        } label: {
+            Label(settings.text(selection.textKey), systemImage: "arrow.up.arrow.down")
+                .font(.caption.weight(.semibold))
+        }
+    }
+}
+
 struct SongsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
     @EnvironmentObject private var player: MusicPlayerViewModel
@@ -119,6 +186,9 @@ struct SongsView: View {
     @State private var deletingVideo: LocalVideo?
     @State private var editedVideoTitle = ""
     @State private var editedVideoArtist = ""
+    @State private var trackSort: TrackSortOption = .title
+
+    private var sortedTracks: [Track] { trackSort.sorted(library.tracks, using: dataStore) }
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -134,16 +204,25 @@ struct SongsView: View {
                 .background(.ultraThinMaterial)
                 .zIndex(1)
 
+                if mediaTab == .songs, !library.tracks.isEmpty {
+                    HStack {
+                        Spacer()
+                        TrackSortMenu(selection: $trackSort)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 5)
+                }
+
                 Group {
                     if mediaTab == .songs {
                         if library.tracks.isEmpty {
                             EmptyMusicView()
                         } else {
                             List {
-                                ForEach(library.tracks) { track in
+                                ForEach(sortedTracks) { track in
                                     HStack(spacing: 10) {
                                         TrackRow(track: track, trailingText: track.duration.musicTime) {
-                                            player.play(track, in: library.tracks)
+                                            player.play(track, in: sortedTracks)
                                         }
                                         Menu {
                                             Button { navigationPath.append(track) } label: { Label(settings.text("details"), systemImage: "info.circle") }
@@ -454,22 +533,41 @@ struct ArtistsView: View {
 
 struct ArtistDetailView: View {
     let artist: Artist
+    @EnvironmentObject private var library: LocalMusicLibrary
     @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
+    @State private var trackSort: TrackSortOption = .title
+    @State private var detailTrack: Track?
+    @State private var renamingTrack: Track?
+    @State private var deletingTrack: Track?
+    @State private var editedName = ""
+
+    private var currentArtistTracks: [Track] {
+        let tracks = library.tracks.filter { $0.artist == artist.name }
+        return trackSort.sorted(tracks, using: dataStore)
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
                 ArtworkView(track: artist.tracks.first, size: 170, cornerRadius: 85)
                 Text(artist.name).font(.largeTitle.bold())
-                queueButtons(tracks: artist.tracks)
+                queueButtons(tracks: currentArtistTracks)
                 VStack(alignment: .leading, spacing: 3) {
-                    SectionHeader(title: settings.text("songsSection"))
-                    ForEach(artist.tracks) { track in
-                        TrackRow(track: track, trailingText: track.duration.musicTime) { player.play(track, in: artist.tracks) }
-                            .padding(.vertical, 10)
-                            .contextMenu {
+                    HStack {
+                        SectionHeader(title: settings.text("songsSection"))
+                        TrackSortMenu(selection: $trackSort)
+                    }
+                    ForEach(currentArtistTracks) { track in
+                        HStack(spacing: 10) {
+                            TrackRow(track: track, trailingText: track.duration.musicTime) {
+                                player.play(track, in: currentArtistTracks)
+                            }
+                            Menu {
+                                Button { detailTrack = track } label: {
+                                    Label(settings.text("details"), systemImage: "info.circle")
+                                }
                                 if !dataStore.playlists.isEmpty {
                                     Menu(settings.text("addPlaylist")) {
                                         ForEach(dataStore.playlists) { playlist in
@@ -477,7 +575,27 @@ struct ArtistDetailView: View {
                                         }
                                     }
                                 }
+                                Button { player.insertNext(track) } label: {
+                                    Label(settings.text("playNext"), systemImage: "text.line.first.and.arrowtriangle.forward")
+                                }
+                                Button {
+                                    editedName = track.title
+                                    renamingTrack = track
+                                } label: {
+                                    Label(settings.text("rename"), systemImage: "pencil")
+                                }
+                                Button(role: .destructive) { deletingTrack = track } label: {
+                                    Label(settings.text("delete"), systemImage: "trash")
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis")
+                                    .font(.title3.bold())
+                                    .frame(width: 34, height: 40)
+                                    .foregroundStyle(.secondary)
                             }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 10)
                     }
                 }
                 .padding(18)
@@ -510,6 +628,33 @@ struct ArtistDetailView: View {
             .padding(.bottom, 110)
         }
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $detailTrack) { track in
+            NavigationStack { TrackDetailView(trackID: track.id) }
+        }
+        .sheet(item: $renamingTrack) { track in
+            RenameTrackSheet(name: $editedName) {
+                library.renameTrack(id: track.id, to: editedName)
+                renamingTrack = nil
+            }
+        }
+        .confirmationDialog(
+            settings.text("deleteSongTitle"),
+            isPresented: Binding(get: { deletingTrack != nil }, set: { if !$0 { deletingTrack = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button(settings.text("removeFromLibrary")) { deletePendingTrack(deleteFile: false) }
+            Button(settings.text("deleteLocalFile"), role: .destructive) { deletePendingTrack(deleteFile: true) }
+            Button(settings.text("cancel"), role: .cancel) { deletingTrack = nil }
+        } message: {
+            Text(settings.text("deleteLocalMessage"))
+        }
+    }
+
+    private func deletePendingTrack(deleteFile: Bool) {
+        guard let track = deletingTrack else { return }
+        library.removeTrack(id: track.id, deleteFile: deleteFile)
+        dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)), validVideoIDs: Set(library.videos.map(\.id)))
+        deletingTrack = nil
     }
 
     private func queueButtons(tracks: [Track]) -> some View {

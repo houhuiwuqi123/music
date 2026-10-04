@@ -330,6 +330,11 @@ final class LocalMusicLibrary: ObservableObject {
             var decoded = try JSONDecoder().decode([Track].self, from: data)
             for index in decoded.indices {
                 decoded[index].fileURL = restoredMediaURL(for: decoded[index].fileURL)
+                if decoded[index].addedAt == nil,
+                   let attributes = try? fileManager.attributesOfItem(atPath: decoded[index].fileURL.path) {
+                    decoded[index].addedAt = attributes[.creationDate] as? Date
+                        ?? attributes[.modificationDate] as? Date
+                }
             }
             tracks = decoded.filter {
                 fileManager.fileExists(atPath: $0.fileURL.path)

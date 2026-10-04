@@ -43,38 +43,89 @@ struct TrackRow: View {
         Button(action: action) {
             HStack(spacing: 13) {
                 ArtworkView(track: track, size: 50, cornerRadius: 14)
-                    .overlay {
-                        if isCurrentTrack {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.purple, lineWidth: 2)
-                        }
-                    }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(track.title)
-                        .font(.body.weight(isCurrentTrack ? .bold : .semibold))
-                        .foregroundStyle(isCurrentTrack ? Color.purple : Color.primary)
-                        .lineLimit(1)
+                    if isCurrentTrack {
+                        MarqueeText(text: track.title, font: .body.weight(.semibold))
+                            .frame(height: 20)
+                    } else {
+                        Text(track.title).font(.body.weight(.semibold)).lineLimit(1)
+                    }
                     Text(track.artist).font(.caption.weight(.medium)).foregroundStyle(.white.opacity(0.68)).lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 8)
                 if let trailingText {
                     Text(trailingText).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
                 }
-                Image(systemName: isCurrentTrack ? (player.isPlaying ? "waveform" : "pause.fill") : "play.fill")
-                    .font(.caption.weight(isCurrentTrack ? .bold : .regular))
-                    .foregroundStyle(isCurrentTrack ? Color.purple : Color.secondary)
-            }
-            .padding(.horizontal, isCurrentTrack ? 8 : 0)
-            .padding(.vertical, isCurrentTrack ? 6 : 0)
-            .background {
                 if isCurrentTrack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.purple.opacity(0.12))
+                    PlayingBarsIcon(isAnimating: player.isPlaying)
+                } else {
+                    Image(systemName: "play.fill").font(.caption).foregroundStyle(.secondary)
                 }
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct MarqueeText: View {
+    let text: String
+    let font: Font
+    @State private var textWidth: CGFloat = 0
+    @State private var containerWidth: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { proxy in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                let overflow = max(textWidth - containerWidth, 0)
+                let travel = overflow + 36
+                let cycle = max(Double(travel / 26) + 1.4, 1.4)
+                let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: cycle)
+                let offset = overflow > 0 ? -CGFloat(max(phase - 0.7, 0) / max(cycle - 0.7, 0.1)) * travel : 0
+                HStack(spacing: 36) {
+                    measuredText
+                    if overflow > 0 { measuredText }
+                }
+                .offset(x: offset)
+            }
+            .onAppear { containerWidth = proxy.size.width }
+            .onChange(of: proxy.size.width) { containerWidth = $0 }
+        }
+        .clipped()
+    }
+
+    private var measuredText: some View {
+        Text(text)
+            .font(font)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { textWidth = proxy.size.width }
+                        .onChange(of: proxy.size.width) { textWidth = $0 }
+                }
+            }
+    }
+}
+
+private struct PlayingBarsIcon: View {
+    let isAnimating: Bool
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.12, paused: !isAnimating)) { context in
+            let step = Int(context.date.timeIntervalSinceReferenceDate * 8)
+            HStack(alignment: .center, spacing: 2) {
+                ForEach(0..<3, id: \.self) { index in
+                    Capsule()
+                        .fill(Color.purple)
+                        .frame(width: 2.5, height: isAnimating ? [8.0, 14.0, 10.0][(step + index) % 3] : 8)
+                }
+            }
+            .frame(width: 16, height: 18)
+        }
+        .accessibilityLabel(isAnimating ? "Playing" : "Paused")
     }
 }
 
