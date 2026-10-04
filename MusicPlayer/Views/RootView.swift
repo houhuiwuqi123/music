@@ -14,6 +14,8 @@ struct RootView: View {
     @State private var searchText = ""
     @State private var showsImporter = false
     @State private var showsSettings = false
+    @State private var showsFeedSupport = false
+    @State private var showsRecognition = false
     @State private var showsNowPlaying = false
     @State private var selectedArtist: Artist?
     @State private var selectedPlaylist: Playlist?
@@ -69,6 +71,8 @@ struct RootView: View {
             onCompletion: handleFileImport
         )
         .sheet(isPresented: $showsSettings) { SettingsView() }
+        .sheet(isPresented: $showsFeedSupport) { FeedSupportView() }
+        .fullScreenCover(isPresented: $showsRecognition) { SongRecognitionView() }
         .sheet(item: $selectedArtist) { artist in
             NavigationStack { ArtistDetailView(artist: artist) }
         }
@@ -88,12 +92,24 @@ struct RootView: View {
         .task {
             await library.refreshDocuments()
             player.updateQueue(library.tracks)
-            dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)))
+            dataStore.reconcile(
+                validTrackIDs: Set(library.tracks.map(\.id)),
+                validVideoIDs: Set(library.videos.map(\.id))
+            )
             player.onTrackStarted = { id in dataStore.recordPlay(trackID: id) }
         }
         .onChange(of: library.tracks) {
             player.updateQueue($0)
-            dataStore.reconcile(validTrackIDs: Set($0.map(\.id)))
+            dataStore.reconcile(
+                validTrackIDs: Set($0.map(\.id)),
+                validVideoIDs: Set(library.videos.map(\.id))
+            )
+        }
+        .onChange(of: library.videos) { videos in
+            dataStore.reconcile(
+                validTrackIDs: Set(library.tracks.map(\.id)),
+                validVideoIDs: Set(videos.map(\.id))
+            )
         }
         .onChange(of: scenePhase) { phase in
             if phase == .active { Task { await library.refreshDocuments() } }
@@ -102,9 +118,14 @@ struct RootView: View {
     }
 
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 10) {
             Button { showsSettings = true } label: {
                 Image(systemName: "gearshape.fill").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
+            }
+            Button { showsFeedSupport = true } label: {
+                Text(settings.text("feedMe"))
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.purple)
             }
             Spacer()
             VStack(spacing: 1) {
@@ -112,6 +133,9 @@ struct RootView: View {
                 Text(currentTitle).font(.headline)
             }
             Spacer()
+            Button { showsRecognition = true } label: {
+                Image(systemName: "shazam.logo").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
+            }
             Button { showsImporter = true } label: {
                 Image(systemName: "square.and.arrow.down.fill").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
             }

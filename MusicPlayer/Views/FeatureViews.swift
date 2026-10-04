@@ -8,13 +8,15 @@ struct HomeView: View {
     @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
+    @State private var rankingTab: MediaLibraryTab = .songs
+    @State private var selectedVideo: LocalVideo?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     let recent = dataStore.recentTracks(from: library.tracks)
-                    SectionHeader(title: settings.text("recent"), subtitle: "\(recent.count)")
+                    SectionHeader(title: settings.text("recent"))
                     if recent.isEmpty {
                         emptyCard(text: settings.text("importHint"))
                     } else {
@@ -35,18 +37,47 @@ struct HomeView: View {
                         }
                     }
 
-                    let top = dataStore.topTracks(from: library.tracks)
-                    SectionHeader(title: settings.text("top"), subtitle: "\(top.count)")
+                    SectionHeader(title: settings.text("top"))
+                    Picker(settings.text("top"), selection: $rankingTab) {
+                        Text(settings.text("songTab")).tag(MediaLibraryTab.songs)
+                        Text(settings.text("videoTab")).tag(MediaLibraryTab.videos)
+                    }
+                    .pickerStyle(.segmented)
                     VStack(spacing: 16) {
-                        ForEach(Array(top.enumerated()), id: \.element.id) { index, track in
-                            HStack(spacing: 12) {
-                                Text("\(index + 1)").font(.headline.monospacedDigit()).foregroundStyle(.secondary).frame(width: 20)
-                                TrackRow(track: track, trailingText: "\(dataStore.playCount(for: track.id)) \(settings.text("plays"))") {
-                                    player.play(track, in: library.tracks)
+                        if rankingTab == .songs {
+                            let top = dataStore.topTracks(from: library.tracks)
+                            ForEach(Array(top.enumerated()), id: \.element.id) { index, track in
+                                HStack(spacing: 12) {
+                                    Text(String(format: "%02d", index + 1))
+                                        .font(.headline.monospacedDigit()).foregroundStyle(.secondary)
+                                        .lineLimit(1).fixedSize().frame(width: 28)
+                                    TrackRow(track: track, trailingText: "\(dataStore.playCount(for: track.id)) \(settings.text("plays"))") {
+                                        player.play(track, in: library.tracks)
+                                    }
                                 }
                             }
+                            if top.isEmpty { Text("—").foregroundStyle(.tertiary).frame(maxWidth: .infinity) }
+                        } else {
+                            let topVideos = dataStore.topVideos(from: library.videos)
+                            ForEach(Array(topVideos.enumerated()), id: \.element.id) { index, video in
+                                Button { player.pause(); selectedVideo = video } label: {
+                                    HStack(spacing: 12) {
+                                        Text(String(format: "%02d", index + 1))
+                                            .font(.headline.monospacedDigit()).foregroundStyle(.secondary)
+                                            .lineLimit(1).fixedSize().frame(width: 28)
+                                        Image(systemName: "play.rectangle.fill").foregroundStyle(.purple)
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(video.title).font(.body.weight(.semibold)).lineLimit(1)
+                                            Text(video.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                        }
+                                        Spacer()
+                                        Text("\(dataStore.playCount(for: video.id)) \(settings.text("plays"))")
+                                            .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                                    }
+                                }.buttonStyle(.plain)
+                            }
+                            if topVideos.isEmpty { Text("—").foregroundStyle(.tertiary).frame(maxWidth: .infinity) }
                         }
-                        if top.isEmpty { Text("—").foregroundStyle(.tertiary).frame(maxWidth: .infinity) }
                     }
                     .padding(18)
                     .glassCard()
@@ -56,6 +87,7 @@ struct HomeView: View {
             }
             .scrollContentBackground(.hidden)
         }
+        .sheet(item: $selectedVideo) { LocalVideoPlayerSheet(video: $0) }
     }
 
     private func emptyCard(text: String) -> some View {
@@ -68,6 +100,11 @@ struct HomeView: View {
     }
 }
 
+private enum MediaLibraryTab: String, CaseIterable, Identifiable {
+    case songs, videos
+    var id: String { rawValue }
+}
+
 struct SongsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
     @EnvironmentObject private var player: MusicPlayerViewModel
@@ -77,69 +114,114 @@ struct SongsView: View {
     @State private var renamingTrack: Track?
     @State private var deletingTrack: Track?
     @State private var editedName = ""
+    @State private var mediaTab: MediaLibraryTab = .songs
+    @State private var selectedVideo: LocalVideo?
+    @State private var editingVideo: LocalVideo?
+    @State private var deletingVideo: LocalVideo?
+    @State private var editedVideoTitle = ""
+    @State private var editedVideoArtist = ""
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
-            Group {
-                if library.tracks.isEmpty {
-                    Color.clear
-                } else {
-                    List {
-                        ForEach(library.tracks) { track in
-                            HStack(spacing: 10) {
-                                TrackRow(track: track, trailingText: track.duration.musicTime) {
-                                    player.play(track, in: library.tracks)
-                                }
-                                Menu {
-                                    Button { navigationPath.append(track) } label: {
-                                        Label(settings.text("details"), systemImage: "info.circle")
-                                    }
-                                    if !dataStore.playlists.isEmpty {
-                                        Menu(settings.text("addPlaylist")) {
-                                            ForEach(dataStore.playlists) { playlist in
-                                                Button(playlist.name) { dataStore.add(track.id, to: playlist.id) }
+            VStack(spacing: 8) {
+                Picker(settings.text("songs"), selection: $mediaTab) {
+                    Text(settings.text("songTab")).tag(MediaLibraryTab.songs)
+                    Text(settings.text("videoTab")).tag(MediaLibraryTab.videos)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+
+                Group {
+                    if mediaTab == .songs {
+                        if library.tracks.isEmpty {
+                            EmptyMusicView()
+                        } else {
+                            List {
+                                ForEach(library.tracks) { track in
+                                    HStack(spacing: 10) {
+                                        TrackRow(track: track, trailingText: track.duration.musicTime) {
+                                            player.play(track, in: library.tracks)
+                                        }
+                                        Menu {
+                                            Button { navigationPath.append(track) } label: { Label(settings.text("details"), systemImage: "info.circle") }
+                                            if !dataStore.playlists.isEmpty {
+                                                Menu(settings.text("addPlaylist")) {
+                                                    ForEach(dataStore.playlists) { playlist in
+                                                        Button(playlist.name) { dataStore.add(track.id, to: playlist.id) }
+                                                    }
+                                                }
                                             }
+                                            Button { player.insertNext(track) } label: { Label(settings.text("playNext"), systemImage: "text.line.first.and.arrowtriangle.forward") }
+                                            Button { editedName = track.title; renamingTrack = track } label: { Label(settings.text("rename"), systemImage: "pencil") }
+                                            Button(role: .destructive) { deletingTrack = track } label: { Label(settings.text("delete"), systemImage: "trash") }
+                                        } label: {
+                                            Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 34, height: 40).foregroundStyle(.secondary)
                                         }
                                     }
-                                    Button { player.insertNext(track) } label: {
-                                        Label(settings.text("playNext"), systemImage: "text.line.first.and.arrowtriangle.forward")
+                                    .padding(.horizontal, 14).padding(.vertical, 10).glassCard(cornerRadius: 18)
+                                    .listRowInsets(EdgeInsets(top: 1.5, leading: 14, bottom: 1.5, trailing: 14))
+                                    .listRowSeparator(.hidden).listRowBackground(Color.clear)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) { deletingTrack = track } label: { Label(settings.text("delete"), systemImage: "trash") }
                                     }
-                                    Button {
-                                        editedName = track.title
-                                        renamingTrack = track
-                                    } label: {
-                                        Label(settings.text("rename"), systemImage: "pencil")
-                                    }
-                                    Button(role: .destructive) { deletingTrack = track } label: {
-                                        Label(settings.text("delete"), systemImage: "trash")
-                                    }
-                                } label: {
-                                    Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 34, height: 40).foregroundStyle(.secondary)
                                 }
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .glassCard(cornerRadius: 18)
-                            .listRowInsets(EdgeInsets(top: 1.5, leading: 14, bottom: 1.5, trailing: 14))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) { deletingTrack = track } label: {
-                                    Label(settings.text("delete"), systemImage: "trash")
+                            .listStyle(.plain).scrollContentBackground(.hidden)
+                        }
+                    } else if library.videos.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "video.slash").font(.system(size: 48)).foregroundStyle(.secondary)
+                            Text(settings.text("noVideos")).font(.title3.bold())
+                        }
+                    } else {
+                        List {
+                            ForEach(library.videos) { video in
+                                HStack(spacing: 12) {
+                                    Button { player.pause(); selectedVideo = video } label: {
+                                        HStack(spacing: 13) {
+                                            Image(systemName: "play.rectangle.fill").font(.title2).foregroundStyle(.purple).frame(width: 50)
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(video.title).font(.body.weight(.semibold)).lineLimit(1)
+                                                Text(video.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                            }
+                                            Spacer()
+                                            Text(video.duration.musicTime).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                                        }
+                                    }.buttonStyle(.plain)
+                                    Menu {
+                                        Button {
+                                            editedVideoTitle = video.title
+                                            editedVideoArtist = video.artist
+                                            editingVideo = video
+                                        } label: { Label(settings.text("editVideoInfo"), systemImage: "pencil") }
+                                        Button(role: .destructive) { deletingVideo = video } label: { Label(settings.text("delete"), systemImage: "trash") }
+                                    } label: { Image(systemName: "ellipsis").frame(width: 34, height: 40) }
+                                }
+                                .padding(.horizontal, 14).padding(.vertical, 10).glassCard(cornerRadius: 18)
+                                .listRowInsets(EdgeInsets(top: 1.5, leading: 14, bottom: 1.5, trailing: 14))
+                                .listRowSeparator(.hidden).listRowBackground(Color.clear)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) { deletingVideo = video } label: { Label(settings.text("delete"), systemImage: "trash") }
                                 }
                             }
                         }
+                        .listStyle(.plain).scrollContentBackground(.hidden)
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 160) }
                 }
+                .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 160) }
             }
             .navigationDestination(for: Track.self) { TrackDetailView(trackID: $0.id) }
             .sheet(item: $renamingTrack) { track in
                 RenameTrackSheet(name: $editedName) {
                     library.renameTrack(id: track.id, to: editedName)
                     renamingTrack = nil
+                }
+            }
+            .sheet(item: $selectedVideo) { LocalVideoPlayerSheet(video: $0) }
+            .sheet(item: $editingVideo) { video in
+                EditTrackInfoSheet(title: $editedVideoTitle, artist: $editedVideoArtist, titleKey: "editVideoInfo", nameKey: "videoName") {
+                    library.updateVideoInfo(id: video.id, title: editedVideoTitle, artist: editedVideoArtist)
+                    editingVideo = nil
                 }
             }
             .confirmationDialog(
@@ -153,13 +235,24 @@ struct SongsView: View {
             } message: {
                 Text(settings.text("deleteLocalMessage"))
             }
+            .confirmationDialog(
+                settings.text("deleteVideoTitle"),
+                isPresented: Binding(get: { deletingVideo != nil }, set: { if !$0 { deletingVideo = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button(settings.text("deleteLocalFile"), role: .destructive) {
+                    if let video = deletingVideo { library.removeVideo(id: video.id) }
+                    deletingVideo = nil
+                }
+                Button(settings.text("cancel"), role: .cancel) { deletingVideo = nil }
+            }
         }
     }
 
     private func deletePendingTrack(deleteFile: Bool) {
         guard let track = deletingTrack else { return }
         library.removeTrack(id: track.id, deleteFile: deleteFile)
-        dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)))
+        dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)), validVideoIDs: Set(library.videos.map(\.id)))
         deletingTrack = nil
     }
 }
@@ -306,7 +399,7 @@ struct TrackDetailView: View {
 
     private func removeTrack(deleteFile: Bool) {
         library.removeTrack(id: trackID, deleteFile: deleteFile)
-        dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)))
+        dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)), validVideoIDs: Set(library.videos.map(\.id)))
         dismiss()
     }
 }
@@ -515,7 +608,7 @@ struct PlaylistsView: View {
             for track in dataStore.tracks(in: playlist, library: library.tracks) {
                 library.removeTrack(id: track.id, deleteFile: songAction == .deleteFiles)
             }
-            dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)))
+            dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)), validVideoIDs: Set(library.videos.map(\.id)))
         }
         dataStore.deletePlaylist(id: playlist.id)
         deletingPlaylist = nil
@@ -637,7 +730,7 @@ struct PlaylistDetailView: View {
             for track in tracks {
                 library.removeTrack(id: track.id, deleteFile: songAction == .deleteFiles)
             }
-            dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)))
+            dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)), validVideoIDs: Set(library.videos.map(\.id)))
         }
         dataStore.deletePlaylist(id: playlistID)
         dismiss()
@@ -704,6 +797,8 @@ private struct RenameTrackSheet: View {
 private struct EditTrackInfoSheet: View {
     @Binding var title: String
     @Binding var artist: String
+    var titleKey = "editSongInfo"
+    var nameKey = "songName"
     let onSave: () -> Void
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
@@ -715,8 +810,8 @@ private struct EditTrackInfoSheet: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text(settings.text("editSongInfo")).font(.title2.bold()).foregroundStyle(.black)
-            TextField(settings.text("songName"), text: $title)
+            Text(settings.text(titleKey)).font(.title2.bold()).foregroundStyle(.black)
+            TextField(settings.text(nameKey), text: $title)
                 .textInputAutocapitalization(.words)
                 .foregroundStyle(.black).tint(.purple).padding(14)
                 .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
@@ -805,6 +900,7 @@ private struct ManagePlaylistSongsView: View {
 
 struct LocalVideoPlayerSheet: View {
     let video: LocalVideo
+    @EnvironmentObject private var dataStore: MusicDataStore
     @State private var player: AVPlayer
 
     init(video: LocalVideo) {
@@ -817,7 +913,10 @@ struct LocalVideoPlayerSheet: View {
             Color.black.ignoresSafeArea()
             VideoPlayer(player: player)
         }
-        .onAppear { player.play() }
+        .onAppear {
+            dataStore.recordPlay(trackID: video.id)
+            player.play()
+        }
         .onDisappear { player.pause() }
     }
 }

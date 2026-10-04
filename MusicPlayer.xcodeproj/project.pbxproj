@@ -21,6 +21,7 @@
 		A1000000000000000000000F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* SettingsView.swift */; };
 		A10000000000000000000010 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* RootView.swift */; };
 		A10000000000000000000011 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* Assets.xcassets */; };
+		A10000000000000000000012 /* SupportAndRecognitionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* SupportAndRecognitionViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +42,7 @@
 		B10000000000000000000011 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B10000000000000000000012 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		B10000000000000000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B10000000000000000000014 /* SupportAndRecognitionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupportAndRecognitionViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -53,7 +55,7 @@
 		D10000000000000000000003 /* Models */ = {isa = PBXGroup; children = (B10000000000000000000002 /* Track.swift */, B1000000000000000000000C /* Playlist.swift */); path = Models; sourceTree = "<group>"; };
 		D10000000000000000000004 /* Services */ = {isa = PBXGroup; children = (B10000000000000000000003 /* LocalMusicLibrary.swift */, B1000000000000000000000D /* MusicDataStore.swift */, B1000000000000000000000E /* AppSettings.swift */); path = Services; sourceTree = "<group>"; };
 		D10000000000000000000005 /* Player */ = {isa = PBXGroup; children = (B10000000000000000000004 /* MusicPlayerViewModel.swift */); path = Player; sourceTree = "<group>"; };
-		D10000000000000000000006 /* Views */ = {isa = PBXGroup; children = (B10000000000000000000006 /* ArtworkView.swift */, B10000000000000000000007 /* MiniPlayerView.swift */, B10000000000000000000008 /* NowPlayingView.swift */, B1000000000000000000000F /* GlassComponents.swift */, B10000000000000000000010 /* FeatureViews.swift */, B10000000000000000000011 /* SettingsView.swift */, B10000000000000000000012 /* RootView.swift */); path = Views; sourceTree = "<group>"; };
+		D10000000000000000000006 /* Views */ = {isa = PBXGroup; children = (B10000000000000000000006 /* ArtworkView.swift */, B10000000000000000000007 /* MiniPlayerView.swift */, B10000000000000000000008 /* NowPlayingView.swift */, B1000000000000000000000F /* GlassComponents.swift */, B10000000000000000000010 /* FeatureViews.swift */, B10000000000000000000011 /* SettingsView.swift */, B10000000000000000000012 /* RootView.swift */, B10000000000000000000014 /* SupportAndRecognitionViews.swift */); path = Views; sourceTree = "<group>"; };
 		D10000000000000000000007 /* Products */ = {isa = PBXGroup; children = (B1000000000000000000000B /* Local Music.app */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -70,7 +72,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		C10000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* MusicPlayerApp.swift in Sources */, A10000000000000000000002 /* Track.swift in Sources */, A10000000000000000000003 /* LocalMusicLibrary.swift in Sources */, A10000000000000000000004 /* MusicPlayerViewModel.swift in Sources */, A10000000000000000000006 /* ArtworkView.swift in Sources */, A10000000000000000000007 /* MiniPlayerView.swift in Sources */, A10000000000000000000008 /* NowPlayingView.swift in Sources */, A1000000000000000000000A /* Playlist.swift in Sources */, A1000000000000000000000B /* MusicDataStore.swift in Sources */, A1000000000000000000000C /* AppSettings.swift in Sources */, A1000000000000000000000D /* GlassComponents.swift in Sources */, A1000000000000000000000E /* FeatureViews.swift in Sources */, A1000000000000000000000F /* SettingsView.swift in Sources */, A10000000000000000000010 /* RootView.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* MusicPlayerApp.swift in Sources */, A10000000000000000000002 /* Track.swift in Sources */, A10000000000000000000003 /* LocalMusicLibrary.swift in Sources */, A10000000000000000000004 /* MusicPlayerViewModel.swift in Sources */, A10000000000000000000006 /* ArtworkView.swift in Sources */, A10000000000000000000007 /* MiniPlayerView.swift in Sources */, A10000000000000000000008 /* NowPlayingView.swift in Sources */, A1000000000000000000000A /* Playlist.swift in Sources */, A1000000000000000000000B /* MusicDataStore.swift in Sources */, A1000000000000000000000C /* AppSettings.swift in Sources */, A1000000000000000000000D /* GlassComponents.swift in Sources */, A1000000000000000000000E /* FeatureViews.swift in Sources */, A1000000000000000000000F /* SettingsView.swift in Sources */, A10000000000000000000010 /* RootView.swift in Sources */, A10000000000000000000012 /* SupportAndRecognitionViews.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

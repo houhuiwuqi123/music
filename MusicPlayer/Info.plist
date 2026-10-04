@@ -22,6 +22,8 @@
     <string>1</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>AURA MUSIC uses the microphone only while identifying music around you.</string>
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
     <key>UIApplicationSupportsIndirectInputEvents</key>

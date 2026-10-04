@@ -81,7 +81,7 @@ final class MusicDataStore: ObservableObject {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    func reconcile(validTrackIDs: Set<UUID>) {
+    func reconcile(validTrackIDs: Set<UUID>, validVideoIDs: Set<UUID> = []) {
         var changed = false
         for index in playlists.indices {
             let validIDs = playlists[index].trackIDs.filter(validTrackIDs.contains)
@@ -93,7 +93,8 @@ final class MusicDataStore: ObservableObject {
         }
         if changed { save(playlists, file: playlistsFile) }
 
-        let staleStats = playStats.keys.filter { !validTrackIDs.contains($0) }
+        let validMediaIDs = validTrackIDs.union(validVideoIDs)
+        let staleStats = playStats.keys.filter { !validMediaIDs.contains($0) }
         if !staleStats.isEmpty {
             staleStats.forEach { playStats.removeValue(forKey: $0) }
             save(playStats, file: statsFile)
@@ -118,6 +119,14 @@ final class MusicDataStore: ObservableObject {
 
     func topTracks(from tracks: [Track], limit: Int = 10) -> [Track] {
         tracks
+            .filter { (playStats[$0.id]?.playCount ?? 0) > 0 }
+            .sorted { (playStats[$0.id]?.playCount ?? 0) > (playStats[$1.id]?.playCount ?? 0) }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    func topVideos(from videos: [LocalVideo], limit: Int = 10) -> [LocalVideo] {
+        videos
             .filter { (playStats[$0.id]?.playCount ?? 0) > 0 }
             .sorted { (playStats[$0.id]?.playCount ?? 0) > (playStats[$1.id]?.playCount ?? 0) }
             .prefix(limit)

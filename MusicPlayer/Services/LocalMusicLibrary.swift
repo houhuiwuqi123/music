@@ -233,6 +233,24 @@ final class LocalMusicLibrary: ObservableObject {
         saveLibrary()
     }
 
+    func updateVideoInfo(id: UUID, title: String, artist: String) {
+        let cleanedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedTitle.isEmpty, !cleanedArtist.isEmpty,
+              let index = videos.firstIndex(where: { $0.id == id }) else { return }
+        videos[index].title = cleanedTitle
+        videos[index].artist = cleanedArtist
+        videos.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        saveLibrary()
+    }
+
+    func removeVideo(id: UUID, deleteFile: Bool = true) {
+        guard let index = videos.firstIndex(where: { $0.id == id }) else { return }
+        if deleteFile { try? fileManager.removeItem(at: videos[index].fileURL) }
+        videos.remove(at: index)
+        saveLibrary()
+    }
+
     func updateLyrics(_ lyrics: String, for trackID: UUID) {
         guard let index = tracks.firstIndex(where: { $0.id == trackID }) else { return }
         tracks[index].lyrics = lyrics

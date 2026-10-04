@@ -1,6 +1,8 @@
 import AVFoundation
 import Combine
 import Foundation
+import MediaPlayer
+import UIKit
 
 @MainActor
 final class MusicPlayerViewModel: ObservableObject {
@@ -29,6 +31,7 @@ final class MusicPlayerViewModel: ObservableObject {
 
     init() {
         configureAudioSession()
+        setupRemoteTransportControls()
         observePlayback()
     }
 
@@ -48,6 +51,7 @@ final class MusicPlayerViewModel: ObservableObject {
         player.replaceCurrentItem(with: item)
         player.play()
         isPlaying = true
+        updateNowPlayingInfo()
         onTrackStarted?(track.id)
     }
 
@@ -63,17 +67,20 @@ final class MusicPlayerViewModel: ObservableObject {
             player.play()
         }
         isPlaying.toggle()
+        updateNowPlayingInfo()
     }
 
     func pause() {
         player.pause()
         isPlaying = false
+        updateNowPlayingInfo()
     }
 
     func seek(to seconds: TimeInterval) {
         let target = min(max(seconds, 0), duration)
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         currentTime = target
+        updateNowPlayingInfo()
     }
 
     func next() {
@@ -104,6 +111,7 @@ final class MusicPlayerViewModel: ObservableObject {
         if let id = currentTrack?.id {
             currentIndex = tracks.firstIndex(where: { $0.id == id })
             if let updatedTrack = tracks.first(where: { $0.id == id }) { currentTrack = updatedTrack }
+            updateNowPlayingInfo()
         }
     }
 
@@ -133,7 +141,7 @@ final class MusicPlayerViewModel: ObservableObject {
     private func configureAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default)
+            try session.setCategory(.playback, mode: .default, options: [.allowAirPlay])
             try session.setActive(true)
         } catch {
             print("Audio session configuration failed: \(error)")
@@ -149,8 +157,68 @@ final class MusicPlayerViewModel: ObservableObject {
                 if let seconds = self.player.currentItem?.duration.seconds, seconds.isFinite {
                     self.duration = seconds
                 }
+                self.updateNowPlayingInfo()
             }
         }
+    }
+
+    private func setupRemoteTransportControls() {
+        let commands = MPRemoteCommandCenter.shared()
+        commands.playCommand.isEnabled = true
+        commands.pauseCommand.isEnabled = true
+        commands.togglePlayPauseCommand.isEnabled = true
+        commands.nextTrackCommand.isEnabled = true
+        commands.previousTrackCommand.isEnabled = true
+        commands.changePlaybackPositionCommand.isEnabled = true
+
+        commands.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.isPlaying else { return }
+                self.togglePlayback()
+            }
+            return .success
+        }
+        commands.pauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.pause() }
+            return .success
+        }
+        commands.togglePlayPauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.togglePlayback() }
+            return .success
+        }
+        commands.nextTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.next() }
+            return .success
+        }
+        commands.previousTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.previous() }
+            return .success
+        }
+        commands.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let positionEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            Task { @MainActor in self?.seek(to: positionEvent.positionTime) }
+            return .success
+        }
+    }
+
+    private func updateNowPlayingInfo() {
+        guard let track = currentTrack else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: track.title,
+            MPMediaItemPropertyArtist: track.artist,
+            MPMediaItemPropertyAlbumTitle: track.albumName,
+            MPMediaItemPropertyPlaybackDuration: duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
+        ]
+        if let data = track.artworkData, let image = UIImage(data: data) {
+            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused
     }
 
     private func observePlaybackEnd(for item: AVPlayerItem) {

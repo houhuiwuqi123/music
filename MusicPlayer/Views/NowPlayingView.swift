@@ -6,6 +6,7 @@ struct NowPlayingView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isSeeking = false
     @State private var seekValue: TimeInterval = 0
+    @State private var selectedPage = 0
 
     var body: some View {
         NavigationStack {
@@ -15,7 +16,7 @@ struct NowPlayingView: View {
                 VStack(spacing: 26) {
                     Spacer(minLength: 8)
 
-                    TabView {
+                    TabView(selection: $selectedPage) {
                         ArtworkView(track: player.currentTrack, size: 282, cornerRadius: 30)
                             .rotationEffect(.degrees(player.isPlaying ? 360 : 0))
                             .animation(
@@ -24,14 +25,17 @@ struct NowPlayingView: View {
                                     : .default,
                                 value: player.isPlaying
                             )
+                            .tag(0)
                         SyncedLyricsView(
                             lyrics: player.currentTrack?.lyrics,
                             currentTime: player.currentTime,
                             duration: player.duration,
                             emptyText: settings.text("noLyrics"),
-                            onSeek: player.seek
+                            onSeek: player.seek,
+                            onShowArtwork: { withAnimation { selectedPage = 0 } }
                         )
                         .padding(.horizontal, 24)
+                        .tag(1)
                     }
                     .tabViewStyle(.page(indexDisplayMode: .automatic))
                     .frame(height: 310)
@@ -113,7 +117,7 @@ struct NowPlayingView: View {
                     Spacer(minLength: 14)
                 }
             }
-            .navigationTitle("Now Playing")
+            .navigationTitle(settings.text("nowPlaying"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -138,6 +142,7 @@ private struct SyncedLyricsView: View {
     let duration: TimeInterval
     let emptyText: String
     let onSeek: (TimeInterval) -> Void
+    let onShowArtwork: () -> Void
     @State private var isDragging = false
     @State private var dragStartTime: TimeInterval = 0
     @State private var draggedTime: TimeInterval?
@@ -183,9 +188,23 @@ private struct SyncedLyricsView: View {
                 guard let id, !isDragging else { return }
                 withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(id, anchor: .center) }
             }
+            .overlay {
+                if isDragging {
+                    HStack(spacing: 10) {
+                        Rectangle().fill(Color.purple).frame(height: 1)
+                        Text(displayTime.musicTime)
+                            .font(.caption.bold().monospacedDigit())
+                            .foregroundStyle(.purple)
+                        Image(systemName: "play.fill").font(.caption).foregroundStyle(.purple)
+                        Rectangle().fill(Color.purple).frame(height: 1)
+                    }
+                    .transition(.opacity)
+                }
+            }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { value in
+                        guard abs(value.translation.height) > abs(value.translation.width) else { return }
                         if !isDragging {
                             isDragging = true
                             dragStartTime = currentTime
@@ -194,7 +213,13 @@ private struct SyncedLyricsView: View {
                         draggedTime = target
                         onSeek(target)
                     }
-                    .onEnded { _ in
+                    .onEnded { value in
+                        guard isDragging else {
+                            if value.translation.width > 45 && abs(value.translation.width) > abs(value.translation.height) {
+                                onShowArtwork()
+                            }
+                            return
+                        }
                         if let draggedTime { onSeek(draggedTime) }
                         self.draggedTime = nil
                         isDragging = false
