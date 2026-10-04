@@ -33,7 +33,7 @@
 		B10000000000000000000007 /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerView.swift; sourceTree = "<group>"; };
 		B10000000000000000000008 /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		B1000000000000000000000B /* Local Music.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Local Music.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1000000000000000000000B /* AURU MUSIC.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AURU MUSIC.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1000000000000000000000C /* Playlist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Playlist.swift; sourceTree = "<group>"; };
 		B1000000000000000000000D /* MusicDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicDataStore.swift; sourceTree = "<group>"; };
 		B1000000000000000000000E /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
@@ -56,15 +56,15 @@
 		D10000000000000000000004 /* Services */ = {isa = PBXGroup; children = (B10000000000000000000003 /* LocalMusicLibrary.swift */, B1000000000000000000000D /* MusicDataStore.swift */, B1000000000000000000000E /* AppSettings.swift */); path = Services; sourceTree = "<group>"; };
 		D10000000000000000000005 /* Player */ = {isa = PBXGroup; children = (B10000000000000000000004 /* MusicPlayerViewModel.swift */); path = Player; sourceTree = "<group>"; };
 		D10000000000000000000006 /* Views */ = {isa = PBXGroup; children = (B10000000000000000000006 /* ArtworkView.swift */, B10000000000000000000007 /* MiniPlayerView.swift */, B10000000000000000000008 /* NowPlayingView.swift */, B1000000000000000000000F /* GlassComponents.swift */, B10000000000000000000010 /* FeatureViews.swift */, B10000000000000000000011 /* SettingsView.swift */, B10000000000000000000012 /* RootView.swift */, B10000000000000000000014 /* SupportAndRecognitionViews.swift */); path = Views; sourceTree = "<group>"; };
-		D10000000000000000000007 /* Products */ = {isa = PBXGroup; children = (B1000000000000000000000B /* Local Music.app */); name = Products; sourceTree = "<group>"; };
+		D10000000000000000000007 /* Products */ = {isa = PBXGroup; children = (B1000000000000000000000B /* AURU MUSIC.app */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		E10000000000000000000001 /* Local Music */ = {isa = PBXNativeTarget; buildConfigurationList = F10000000000000000000002 /* Build configuration list for PBXNativeTarget */; buildPhases = (C10000000000000000000002 /* Sources */, C10000000000000000000001 /* Frameworks */, C10000000000000000000003 /* Resources */); buildRules = (); dependencies = (); name = "Local Music"; productName = MusicPlayer; productReference = B1000000000000000000000B /* Local Music.app */; productType = "com.apple.product-type.application"; };
+		E10000000000000000000001 /* AURU MUSIC */ = {isa = PBXNativeTarget; buildConfigurationList = F10000000000000000000002 /* Build configuration list for PBXNativeTarget "AURU MUSIC" */; buildPhases = (C10000000000000000000002 /* Sources */, C10000000000000000000001 /* Frameworks */, C10000000000000000000003 /* Resources */); buildRules = (); dependencies = (); name = "AURU MUSIC"; productName = "AURU MUSIC"; productReference = B1000000000000000000000B /* AURU MUSIC.app */; productType = "com.apple.product-type.application"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		E10000000000000000000002 /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600; TargetAttributes = {E10000000000000000000001 = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = F10000000000000000000001 /* Build configuration list for PBXProject */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = D10000000000000000000001; productRefGroup = D10000000000000000000007 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (E10000000000000000000001 /* Local Music */); };
+		E10000000000000000000002 /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600; TargetAttributes = {E10000000000000000000001 = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = F10000000000000000000001 /* Build configuration list for PBXProject */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = D10000000000000000000001; productRefGroup = D10000000000000000000007 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (E10000000000000000000001 /* AURU MUSIC */); };
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
@@ -84,7 +84,7 @@
 
 /* Begin XCConfigurationList section */
 		F10000000000000000000001 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (110000000000000000000001 /* Debug */, 110000000000000000000002 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		F10000000000000000000002 /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (110000000000000000000003 /* Debug */, 110000000000000000000004 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		F10000000000000000000002 /* Build configuration list for PBXNativeTarget "AURU MUSIC" */ = {isa = XCConfigurationList; buildConfigurations = (110000000000000000000003 /* Debug */, 110000000000000000000004 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = E10000000000000000000002 /* Project object */;

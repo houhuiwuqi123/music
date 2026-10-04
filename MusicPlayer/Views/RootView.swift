@@ -129,7 +129,7 @@ struct RootView: View {
             }
             Spacer()
             VStack(spacing: 1) {
-                Text("AURA MUSIC").font(.caption.weight(.black)).tracking(3).foregroundStyle(.purple)
+                Text("AURU MUSIC").font(.caption.weight(.black)).tracking(3).foregroundStyle(.purple)
                 Text(currentTitle).font(.headline)
             }
             Spacer()

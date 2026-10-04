@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
-    <string>AURA MUSIC</string>
+    <string>AURU MUSIC</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -23,7 +23,7 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>AURA MUSIC uses the microphone only while identifying music around you.</string>
+    <string>AURU MUSIC uses the microphone only while identifying music around you.</string>
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
     <key>UIApplicationSupportsIndirectInputEvents</key>

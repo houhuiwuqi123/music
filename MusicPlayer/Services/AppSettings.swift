@@ -70,7 +70,7 @@ final class AppSettings: ObservableObject {
             "deletePlaylistMessage": ("请选择是否同时处理歌单中的歌曲。", "Choose whether to also remove the songs in this playlist."),
             "renamePlaylist": ("修改歌单名称", "Rename Playlist"),
             "editSongInfo": ("修改歌曲信息", "Edit Song Info"), "artistName": ("艺人名称", "Artist Name"),
-            "feedMe": ("去投喂", "Tip Me"), "feedSupport": ("投喂支持", "Support AURA MUSIC"),
+            "feedMe": ("去投喂", "Tip Me"), "feedSupport": ("投喂支持", "Support AURU MUSIC"),
             "feedThanks": ("感谢你的支持", "Thank you for your support"),
             "songTab": ("歌曲", "Songs"), "videoTab": ("视频", "Videos"),
             "editVideoInfo": ("修改视频信息", "Edit Video Info"), "videoName": ("视频名称", "Video Name"),

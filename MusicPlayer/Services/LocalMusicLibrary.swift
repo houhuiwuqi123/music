@@ -276,10 +276,13 @@ final class LocalMusicLibrary: ObservableObject {
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
         let metadata = try await asset.load(.commonMetadata)
+        let inferred = inferMediaInfo(from: url)
+        let filenameStem = cleanFilenameStem(url)
 
-        let title = await metadata.text(for: .commonIdentifierTitle)
-            ?? url.deletingPathExtension().lastPathComponent
-        let artist = await metadata.text(for: .commonIdentifierArtist) ?? "Unknown Artist"
+        let metadataTitle = await metadata.text(for: .commonIdentifierTitle)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let metadataArtist = await metadata.text(for: .commonIdentifierArtist)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = metadataTitle.flatMap { $0.isEmpty || $0 == filenameStem ? nil : $0 } ?? inferred.title
+        let artist = metadataArtist.flatMap { isUnknownArtist($0) ? nil : $0 } ?? inferred.artist ?? "Unknown Artist"
         let album = await metadata.text(for: .commonIdentifierAlbumName) ?? "Unknown Album"
         let artworkData = await metadata.data(for: .commonIdentifierArtwork)
         let embeddedLyrics = await metadata.text(containingIdentifier: "lyrics")
@@ -300,8 +303,12 @@ final class LocalMusicLibrary: ObservableObject {
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
         let metadata = try await asset.load(.commonMetadata)
-        let title = await metadata.text(for: .commonIdentifierTitle) ?? url.deletingPathExtension().lastPathComponent
-        let artist = await metadata.text(for: .commonIdentifierArtist) ?? "Unknown Artist"
+        let inferred = inferMediaInfo(from: url)
+        let filenameStem = cleanFilenameStem(url)
+        let metadataTitle = await metadata.text(for: .commonIdentifierTitle)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let metadataArtist = await metadata.text(for: .commonIdentifierArtist)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = metadataTitle.flatMap { $0.isEmpty || $0 == filenameStem ? nil : $0 } ?? inferred.title
+        let artist = metadataArtist.flatMap { isUnknownArtist($0) ? nil : $0 } ?? inferred.artist ?? "Unknown Artist"
         return LocalVideo(
             title: title,
             artist: artist,
@@ -318,13 +325,78 @@ final class LocalMusicLibrary: ObservableObject {
                 fileManager.fileExists(atPath: $0.fileURL.path)
                     && !hiddenTrackPaths.contains($0.fileURL.standardizedFileURL.path)
             }
+            for index in tracks.indices {
+                let inferred = inferMediaInfo(from: tracks[index].fileURL)
+                let originalFileTitle = cleanFilenameStem(tracks[index].fileURL)
+                if tracks[index].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || tracks[index].title == originalFileTitle {
+                    tracks[index].title = inferred.title
+                }
+                if isUnknownArtist(tracks[index].artist), let artist = inferred.artist {
+                    tracks[index].artist = artist
+                }
+            }
         } catch {
             tracks = []
         }
         if let data = try? Data(contentsOf: try videoIndexURL()),
            let decoded = try? JSONDecoder().decode([LocalVideo].self, from: data) {
             videos = decoded.filter { fileManager.fileExists(atPath: $0.fileURL.path) }
+            for index in videos.indices {
+                let inferred = inferMediaInfo(from: videos[index].fileURL)
+                let originalFileTitle = cleanFilenameStem(videos[index].fileURL)
+                if videos[index].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || videos[index].title == originalFileTitle {
+                    videos[index].title = inferred.title
+                }
+                if isUnknownArtist(videos[index].artist), let artist = inferred.artist {
+                    videos[index].artist = artist
+                }
+            }
         }
+    }
+
+    private func inferMediaInfo(from url: URL) -> (title: String, artist: String?) {
+        var stem = cleanFilenameStem(url)
+        stem = stem.replacingOccurrences(of: "_", with: " ")
+        stem = stem.replacingOccurrences(of: #"^\s*\d{1,3}[\s._-]+"#, with: "", options: .regularExpression)
+        stem = stem.replacingOccurrences(
+            of: #"\s*[\[(](?:official\s*)?(?:music\s*)?(?:video|audio|lyrics?|lyric\s*video|mv|hd|4k)[\])]\s*$"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        stem = stem.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let separators = [" - ", " – ", " — ", "｜", " | "]
+        for separator in separators {
+            let parts = stem.components(separatedBy: separator)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if parts.count >= 2 {
+                return (parts.dropFirst().joined(separator: " - "), parts[0])
+            }
+        }
+
+        let compactParts = stem.split(separator: "-", maxSplits: 1)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+        if compactParts.count == 2,
+           !compactParts[0].isEmpty, !compactParts[1].isEmpty,
+           compactParts[0].count <= 80, compactParts[1].count <= 160 {
+            return (compactParts[1], compactParts[0])
+        }
+        return (stem.isEmpty ? url.deletingPathExtension().lastPathComponent : stem, nil)
+    }
+
+    private func cleanFilenameStem(_ url: URL) -> String {
+        url.deletingPathExtension().lastPathComponent
+            .replacingOccurrences(of: #"\s*\(\d+\)$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func isUnknownArtist(_ artist: String) -> Bool {
+        let normalized = artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty || normalized == "unknown artist" || normalized == "未知艺人"
     }
 
     private func saveLibrary() {

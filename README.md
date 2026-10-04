@@ -1,4 +1,4 @@
-# AURA MUSIC — SwiftUI iOS Player
+# AURU MUSIC — SwiftUI iOS Player
 
 A modern, local-first music player built with SwiftUI and AVFoundation for iOS 16 and later.
 
@@ -33,7 +33,7 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 
 1. Copy this folder to macOS with Xcode 15 or newer.
 2. Open `MusicPlayer.xcodeproj`.
-3. Select the **Local Music** target.
+3. Select the **AURU MUSIC** target.
 4. Under **Signing & Capabilities**, choose your Apple Developer Team and change the bundle identifier if needed.
 5. Choose an iPhone simulator or connected iPhone and press **Run**.
 6. Tap the import button and choose audio files from the Files picker.
@@ -45,7 +45,7 @@ The deployment target is iOS 16.0. No third-party packages are required.
 The app cannot read arbitrary files elsewhere on an iPhone because iOS apps run in a sandbox. Use either supported workflow:
 
 1. **Native Files picker:** tap the import button in the app. SwiftUI `fileImporter` opens the system Files interface. Selected files from On My iPhone, iCloud Drive, Downloads, or an installed provider are accessed through security-scoped URLs, coordinated with the provider, copied into `Documents/Imported Music`, and indexed immediately.
-2. **Finder or iTunes file sharing:** connect the iPhone to a Mac or PC, open its Files/File Sharing section, select **Local Music**, and copy audio files into the app. Reopen or foreground the app to scan Documents automatically.
+2. **Finder or iTunes file sharing:** connect the iPhone to a Mac or PC, open its Files/File Sharing section, select **AURU MUSIC**, and copy audio files into the app. Reopen or foreground the app to scan Documents automatically.
 
 The project enables both `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`. The scanner accepts every file type declared by iOS as audio or movie. It also explicitly recognizes common audio extensions including MP3, AAC, M4A/M4B, WAV, AIFF, CAF, FLAC, AC3/EAC3, AMR, OGG/OGA, Opus and WMA, plus common video containers including MP4, MOV, M4V, MPEG, 3GP, AVI, MKV, WebM, MTS/M2TS and TS. FLAC is supported directly through AVFoundation on current iOS versions. Playback of any container still requires its internal codec to be supported by the installed iOS version.
 
