@@ -39,6 +39,7 @@ struct NowPlayingView: View {
                                 currentTime: player.currentTime,
                                 duration: player.duration,
                                 emptyText: settings.text("noLyrics"),
+                                onScrub: player.scrub,
                                 onSeek: player.seek,
                                 onShowArtwork: { withAnimation { selectedPage = 0 } }
                             )
@@ -150,20 +151,24 @@ private struct SyncedLyricsView: View {
     let currentTime: TimeInterval
     let duration: TimeInterval
     let emptyText: String
+    let onScrub: (TimeInterval) -> Void
     let onSeek: (TimeInterval) -> Void
     let onShowArtwork: () -> Void
     private let lines: [LyricLine]
+    @GestureState private var scrubGestureIsActive = false
     @State private var isDragging = false
     @State private var isDragSettled = false
     @State private var dragStartTime: TimeInterval = 0
     @State private var draggedTime: TimeInterval?
     @State private var dragUpdateToken = 0
+    @State private var lastScrubSeekUptime: TimeInterval = 0
 
     init(
         lyrics: String?,
         currentTime: TimeInterval,
         duration: TimeInterval,
         emptyText: String,
+        onScrub: @escaping (TimeInterval) -> Void,
         onSeek: @escaping (TimeInterval) -> Void,
         onShowArtwork: @escaping () -> Void
     ) {
@@ -171,6 +176,7 @@ private struct SyncedLyricsView: View {
         self.currentTime = currentTime
         self.duration = duration
         self.emptyText = emptyText
+        self.onScrub = onScrub
         self.onSeek = onSeek
         self.onShowArtwork = onShowArtwork
         lines = Self.parse(lyrics ?? "")
@@ -215,12 +221,21 @@ private struct SyncedLyricsView: View {
             }
             .scrollDisabled(lines.isEmpty)
             .onChange(of: activeLineID) { id in
-                guard let id, !isDragging else { return }
+                guard let id, !isDragging, !scrubGestureIsActive else { return }
                 withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(id, anchor: .center) }
+            }
+            .onChange(of: scrubGestureIsActive) { isActive in
+                guard !isActive, isDragging else { return }
+                finishScrubbing(commit: true)
             }
             .overlay { scrubIndicator }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 4)
+                    .updating($scrubGestureIsActive) { value, state, _ in
+                        guard hasTimedLyrics, duration > 0,
+                              abs(value.translation.height) > abs(value.translation.width) else { return }
+                        state = true
+                    }
                     .onChanged { value in
                         guard abs(value.translation.height) > abs(value.translation.width) else { return }
                         guard hasTimedLyrics, duration > 0 else { return }
@@ -233,6 +248,11 @@ private struct SyncedLyricsView: View {
                         let token = dragUpdateToken
                         let target = min(max(dragStartTime - Double(value.translation.height) * 0.12, 0), max(duration, 0))
                         draggedTime = target
+                        let now = ProcessInfo.processInfo.systemUptime
+                        if now - lastScrubSeekUptime >= 0.08 || target == 0 || target == duration {
+                            lastScrubSeekUptime = now
+                            onScrub(target)
+                        }
                         Task { @MainActor in
                             try? await Task.sleep(for: .milliseconds(140))
                             guard isDragging, token == dragUpdateToken else { return }
@@ -246,11 +266,7 @@ private struct SyncedLyricsView: View {
                             }
                             return
                         }
-                        if let draggedTime { onSeek(draggedTime) }
-                        self.draggedTime = nil
-                        isDragging = false
-                        isDragSettled = false
-                        dragUpdateToken += 1
+                        finishScrubbing(commit: true)
                     }
             )
         }
@@ -258,7 +274,7 @@ private struct SyncedLyricsView: View {
     }
 
     @ViewBuilder private var scrubIndicator: some View {
-        if isDragging {
+        if isDragging && scrubGestureIsActive {
             HStack(spacing: 10) {
                 Rectangle()
                     .fill(Color.purple.opacity(isDragSettled ? 0.72 : 0.22))
@@ -278,6 +294,15 @@ private struct SyncedLyricsView: View {
             .transition(.opacity)
             .allowsHitTesting(false)
         }
+    }
+
+    private func finishScrubbing(commit: Bool) {
+        if commit, let draggedTime { onSeek(draggedTime) }
+        draggedTime = nil
+        isDragging = false
+        isDragSettled = false
+        lastScrubSeekUptime = 0
+        dragUpdateToken += 1
     }
 
     private static func parse(_ source: String) -> [LyricLine] {

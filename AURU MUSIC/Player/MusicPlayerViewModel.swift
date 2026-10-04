@@ -111,6 +111,17 @@ final class MusicPlayerViewModel: ObservableObject {
         updateNowPlayingInfo()
     }
 
+    func scrub(to seconds: TimeInterval) {
+        let target = min(max(seconds, 0), duration)
+        let tolerance = CMTime(seconds: 0.12, preferredTimescale: 600)
+        playbackPlayer.seek(
+            to: CMTime(seconds: target, preferredTimescale: 600),
+            toleranceBefore: tolerance,
+            toleranceAfter: tolerance
+        )
+        currentTime = target
+    }
+
     func next() {
         let count = currentVideo == nil ? trackQueue.count : videoQueue.count
         guard count > 0 else { return }
