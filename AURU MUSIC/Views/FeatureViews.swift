@@ -317,12 +317,6 @@ struct SongsView: View {
                                         Button(role: .destructive) { deletingTrack = track } label: { Label(settings.text("delete"), systemImage: "trash") }
                                     }
                                 }
-                                if player.hasCurrentMedia {
-                                    Color.clear.frame(height: 66.5)
-                                        .listRowInsets(EdgeInsets())
-                                        .listRowSeparator(.hidden)
-                                        .listRowBackground(Color.clear)
-                                }
                             }
                             .listStyle(.plain)
                             .scrollContentBackground(.hidden)
@@ -363,12 +357,6 @@ struct SongsView: View {
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button(role: .destructive) { deletingVideo = video } label: { Label(settings.text("delete"), systemImage: "trash") }
                                 }
-                            }
-                            if player.hasCurrentMedia {
-                                Color.clear.frame(height: 66.5)
-                                    .listRowInsets(EdgeInsets())
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
                             }
                         }
                         .listStyle(.plain)
@@ -578,7 +566,6 @@ struct TrackDetailView: View {
 
 struct ArtistsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
-    @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var navigationPath: [Artist] = []
@@ -624,12 +611,6 @@ struct ArtistsView: View {
                                 .listRowInsets(EdgeInsets(top: 1.5, leading: 14, bottom: 1.5, trailing: 14))
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
-                            }
-                            if player.hasCurrentMedia {
-                                Color.clear.frame(height: 66.5)
-                                    .listRowInsets(EdgeInsets())
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
                             }
                     }
                     .listStyle(.plain)
@@ -796,7 +777,6 @@ struct ArtistDetailView: View {
 
 struct PlaylistsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
-    @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var showsCreate = false
@@ -836,12 +816,6 @@ struct PlaylistsView: View {
                                 Label(settings.text("delete"), systemImage: "trash")
                             }
                         }
-                    }
-                    if player.hasCurrentMedia {
-                        Color.clear.frame(height: 66.5)
-                            .listRowInsets(EdgeInsets())
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
                     }
                 }
                     .listStyle(.plain)
