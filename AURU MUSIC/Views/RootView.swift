@@ -39,9 +39,10 @@ struct RootView: View {
                 .toolbarBackground(Color(red: 0.025, green: 0.03, blue: 0.055), for: .tabBar)
                 .toolbarBackground(.visible, for: .tabBar)
                 .background(TabReselectDetector())
-                .safeAreaInset(edge: .bottom, spacing: 3) {
+                .overlay(alignment: .bottom) {
                     if player.hasCurrentMedia {
                         MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
+                            .padding(.bottom, 49 + 3)
                             .zIndex(100)
                     }
                 }
