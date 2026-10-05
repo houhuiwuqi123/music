@@ -318,7 +318,8 @@ struct SongsView: View {
                                     }
                                 }
                                 if player.hasCurrentMedia {
-                                    Color.clear.frame(height: 74)
+                                    Color.clear.frame(height: 66.5)
+                                        .listRowInsets(EdgeInsets())
                                         .listRowSeparator(.hidden)
                                         .listRowBackground(Color.clear)
                                 }
@@ -364,7 +365,8 @@ struct SongsView: View {
                                 }
                             }
                             if player.hasCurrentMedia {
-                                Color.clear.frame(height: 74)
+                                Color.clear.frame(height: 66.5)
+                                    .listRowInsets(EdgeInsets())
                                     .listRowSeparator(.hidden)
                                     .listRowBackground(Color.clear)
                             }
@@ -624,7 +626,8 @@ struct ArtistsView: View {
                                 .listRowBackground(Color.clear)
                             }
                             if player.hasCurrentMedia {
-                                Color.clear.frame(height: 74)
+                                Color.clear.frame(height: 66.5)
+                                    .listRowInsets(EdgeInsets())
                                     .listRowSeparator(.hidden)
                                     .listRowBackground(Color.clear)
                             }
@@ -835,7 +838,8 @@ struct PlaylistsView: View {
                         }
                     }
                     if player.hasCurrentMedia {
-                        Color.clear.frame(height: 74)
+                        Color.clear.frame(height: 66.5)
+                            .listRowInsets(EdgeInsets())
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                     }
@@ -1083,7 +1087,10 @@ private struct CreatePlaylistSheet: View {
     var body: some View {
         VStack(spacing: 20) {
             Text(settings.text("newPlaylist")).font(.title2.bold()).foregroundStyle(.black)
-            TextField(settings.text("playlistName"), text: $name)
+            TextField(text: $name) {
+                Text(settings.text("playlistName"))
+                    .foregroundStyle(Color.black.opacity(0.45))
+            }
                 .textInputAutocapitalization(.words)
                 .foregroundStyle(.black)
                 .tint(.purple)

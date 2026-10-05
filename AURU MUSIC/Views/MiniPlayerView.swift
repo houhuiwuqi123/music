@@ -91,7 +91,6 @@ struct MiniPlayerView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 6)
         }
     }
 
