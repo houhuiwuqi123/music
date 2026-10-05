@@ -39,6 +39,12 @@ struct RootView: View {
                 .toolbarBackground(Color(red: 0.025, green: 0.03, blue: 0.055), for: .tabBar)
                 .toolbarBackground(.visible, for: .tabBar)
                 .background(TabReselectDetector())
+                .safeAreaInset(edge: .bottom, spacing: 3) {
+                    if player.hasCurrentMedia {
+                        MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
+                            .zIndex(100)
+                    }
+                }
             }
             .padding(.top, 8)
 
@@ -63,17 +69,6 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .overlay(alignment: .bottom) {
-            GeometryReader { proxy in
-                if player.hasCurrentMedia {
-                    MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
-                        .padding(.bottom, proxy.safeAreaInsets.bottom + 52)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                        .zIndex(100)
-                }
-            }
-            .allowsHitTesting(player.hasCurrentMedia)
-        }
         .fileImporter(
             isPresented: $showsImporter,
             allowedContentTypes: LocalMusicLibrary.importableTypes,
