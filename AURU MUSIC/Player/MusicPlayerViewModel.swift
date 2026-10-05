@@ -5,7 +5,7 @@ import MediaPlayer
 import UIKit
 
 @MainActor
-final class MusicPlayerViewModel: ObservableObject {
+final class MusicPlayerViewModel: NSObject, ObservableObject {
     enum RepeatMode: String, CaseIterable, Identifiable {
         case list = "List Loop"
         case one = "Repeat One"
@@ -36,11 +36,10 @@ final class MusicPlayerViewModel: ObservableObject {
     private var currentIndex: Int?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
-    private var interruptionObserver: NSObjectProtocol?
-    private var routeChangeObserver: NSObjectProtocol?
     private var playbackStatusObserver: AnyCancellable?
 
-    init() {
+    override init() {
+        super.init()
         configureAudioSession()
         setupAudioSessionObservers()
         setupRemoteTransportControls()
@@ -51,8 +50,7 @@ final class MusicPlayerViewModel: ObservableObject {
     deinit {
         if let timeObserver { playbackPlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
-        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
-        if let routeChangeObserver { NotificationCenter.default.removeObserver(routeChangeObserver) }
+        NotificationCenter.default.removeObserver(self)
     }
 
     func play(_ track: Track, in tracks: [Track]) {
@@ -230,28 +228,32 @@ final class MusicPlayerViewModel: ObservableObject {
 
     private func setupAudioSessionObservers() {
         let center = NotificationCenter.default
-        interruptionObserver = center.addObserver(
-            forName: AVAudioSession.interruptionNotification,
-            object: AVAudioSession.sharedInstance(),
-            queue: .main
-        ) { [weak self] notification in
-            guard let rawValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  let type = AVAudioSession.InterruptionType(rawValue: rawValue), type == .began else { return }
-            Task { @MainActor in self?.synchronizePausedState() }
-        }
-        routeChangeObserver = center.addObserver(
-            forName: AVAudioSession.routeChangeNotification,
-            object: AVAudioSession.sharedInstance(),
-            queue: .main
-        ) { [weak self] notification in
-            guard let rawValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
-                  let reason = AVAudioSession.RouteChangeReason(rawValue: rawValue),
-                  reason == .oldDeviceUnavailable else { return }
-            Task { @MainActor in
-                self?.playbackPlayer.pause()
-                self?.synchronizePausedState()
-            }
-        }
+        center.addObserver(
+            self,
+            selector: #selector(handleAudioSessionInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+        center.addObserver(
+            self,
+            selector: #selector(handleAudioRouteChange(_:)),
+            name: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+    }
+
+    @objc private func handleAudioSessionInterruption(_ notification: Notification) {
+        guard let rawValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: rawValue), type == .began else { return }
+        synchronizePausedState()
+    }
+
+    @objc private func handleAudioRouteChange(_ notification: Notification) {
+        guard let rawValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: rawValue),
+              reason == .oldDeviceUnavailable else { return }
+        playbackPlayer.pause()
+        synchronizePausedState()
     }
 
     private func observePlaybackStatus() {

@@ -1,5 +1,5 @@
+import MessageUI
 import SwiftUI
-import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
@@ -74,6 +74,7 @@ private struct FeedbackView: View {
     @State private var subject = ""
     @State private var message = ""
     @State private var showsMailError = false
+    @State private var showsMailComposer = false
 
     var body: some View {
         Form {
@@ -95,6 +96,15 @@ private struct FeedbackView: View {
         .background(DarkBackground())
         .navigationTitle(settings.text("emailFeedback"))
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showsMailComposer) {
+            MailComposeView(
+                isPresented: $showsMailComposer,
+                recipient: "jenyhssy@gmail.com",
+                subject: subject,
+                message: message
+            )
+            .ignoresSafeArea()
+        }
         .onAppear {
             if subject.isEmpty { subject = settings.text("feedbackSubject") }
         }
@@ -106,16 +116,49 @@ private struct FeedbackView: View {
     }
 
     private func openMail() {
-        var components = URLComponents()
-        components.scheme = "mailto"
-        components.queryItems = [
-            URLQueryItem(name: "subject", value: subject),
-            URLQueryItem(name: "body", value: message)
-        ]
-        guard let url = components.url, UIApplication.shared.canOpenURL(url) else {
+        guard MFMailComposeViewController.canSendMail() else {
             showsMailError = true
             return
         }
-        UIApplication.shared.open(url)
+        showsMailComposer = true
+    }
+}
+
+private struct MailComposeView: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let recipient: String
+    let subject: String
+    let message: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isPresented: $isPresented)
+    }
+
+    func makeUIViewController(context: Context) -> MFMailComposeViewController {
+        let controller = MFMailComposeViewController()
+        controller.mailComposeDelegate = context.coordinator
+        controller.setToRecipients([recipient])
+        controller.setSubject(subject)
+        controller.setMessageBody(message, isHTML: false)
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: MFMailComposeViewController, context: Context) {}
+
+    final class Coordinator: NSObject, MFMailComposeViewControllerDelegate {
+        @Binding private var isPresented: Bool
+
+        init(isPresented: Binding<Bool>) {
+            _isPresented = isPresented
+        }
+
+        func mailComposeController(
+            _ controller: MFMailComposeViewController,
+            didFinishWith result: MFMailComposeResult,
+            error: Error?
+        ) {
+            controller.dismiss(animated: true)
+            isPresented = false
+        }
     }
 }
