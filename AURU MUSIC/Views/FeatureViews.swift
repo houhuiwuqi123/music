@@ -250,6 +250,7 @@ struct SongsView: View {
     @State private var editedVideoTitle = ""
     @State private var editedVideoArtist = ""
     @State private var trackSort: TrackSortOption = .title
+    @State private var scrollResetToken = 0
 
     private var sortedTracks: [Track] { trackSort.sorted(library.tracks, using: dataStore) }
 
@@ -316,9 +317,15 @@ struct SongsView: View {
                                         Button(role: .destructive) { deletingTrack = track } label: { Label(settings.text("delete"), systemImage: "trash") }
                                     }
                                 }
+                                if player.hasCurrentMedia {
+                                    Color.clear.frame(height: 74)
+                                        .listRowSeparator(.hidden)
+                                        .listRowBackground(Color.clear)
+                                }
                             }
                             .listStyle(.plain)
                             .scrollContentBackground(.hidden)
+                            .id("songs-\(scrollResetToken)")
                         }
                     } else if library.videos.isEmpty {
                         VStack(spacing: 12) {
@@ -356,9 +363,15 @@ struct SongsView: View {
                                     Button(role: .destructive) { deletingVideo = video } label: { Label(settings.text("delete"), systemImage: "trash") }
                                 }
                             }
+                            if player.hasCurrentMedia {
+                                Color.clear.frame(height: 74)
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
                         }
                         .listStyle(.plain)
                         .scrollContentBackground(.hidden)
+                        .id("videos-\(scrollResetToken)")
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -398,6 +411,10 @@ struct SongsView: View {
                 }
                 Button(settings.text("cancel"), role: .cancel) { deletingVideo = nil }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
+            guard notification.object as? Int == 1 else { return }
+            scrollResetToken += 1
         }
     }
 
@@ -559,10 +576,12 @@ struct TrackDetailView: View {
 
 struct ArtistsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
+    @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var navigationPath: [Artist] = []
     @State private var artistSort: ArtistSortOption = .name
+    @State private var scrollResetToken = 0
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -586,7 +605,12 @@ struct ArtistsView: View {
                                         ArtworkView(track: artist.tracks.first, size: 50, cornerRadius: 14)
                                         VStack(alignment: .leading, spacing: 5) {
                                             Text(artist.name).font(.headline)
-                                            Text("\(artist.tracks.count) \(settings.text("tracks"))").font(.caption).foregroundStyle(.secondary)
+                                            HStack(spacing: 10) {
+                                                Label("\(artist.tracks.count)", systemImage: "music.note")
+                                                Label("\(artist.videos.count)", systemImage: "play.rectangle.fill")
+                                            }
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                         }
                                         Spacer()
                                     }
@@ -599,12 +623,22 @@ struct ArtistsView: View {
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
                             }
+                            if player.hasCurrentMedia {
+                                Color.clear.frame(height: 74)
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .id(scrollResetToken)
                 }
             }
             .navigationDestination(for: Artist.self) { ArtistDetailView(artist: $0) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
+            guard notification.object as? Int == 2 else { return }
+            if navigationPath.isEmpty { scrollResetToken += 1 }
         }
     }
 }
@@ -759,12 +793,14 @@ struct ArtistDetailView: View {
 
 struct PlaylistsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
+    @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var showsCreate = false
     @State private var playlistName = ""
     @State private var deletingPlaylist: Playlist?
     @State private var navigationPath: [UUID] = []
+    @State private var scrollResetToken = 0
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -798,9 +834,15 @@ struct PlaylistsView: View {
                             }
                         }
                     }
+                    if player.hasCurrentMedia {
+                        Color.clear.frame(height: 74)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                    }
                 }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .id(scrollResetToken)
                 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -831,6 +873,10 @@ struct PlaylistsView: View {
             } message: {
                 Text(settings.text("deletePlaylistMessage"))
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
+            guard notification.object as? Int == 3 else { return }
+            if navigationPath.isEmpty { scrollResetToken += 1 }
         }
     }
 

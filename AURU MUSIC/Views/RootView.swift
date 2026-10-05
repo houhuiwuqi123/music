@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct RootView: View {
@@ -37,6 +38,7 @@ struct RootView: View {
                 .tint(.purple)
                 .toolbarBackground(Color(red: 0.025, green: 0.03, blue: 0.055), for: .tabBar)
                 .toolbarBackground(.visible, for: .tabBar)
+                .background(TabReselectDetector())
             }
             .padding(.top, 8)
 
@@ -62,9 +64,13 @@ struct RootView: View {
         }
         .preferredColorScheme(.dark)
         .overlay(alignment: .bottom) {
-            MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
-                .padding(.bottom, 58)
-                .zIndex(100)
+            GeometryReader { proxy in
+                MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
+                    .padding(.bottom, proxy.safeAreaInsets.bottom + 52)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .zIndex(100)
+            }
+            .allowsHitTesting(player.hasCurrentMedia)
         }
         .fileImporter(
             isPresented: $showsImporter,
@@ -99,7 +105,10 @@ struct RootView: View {
                 validVideoIDs: Set(library.videos.map(\.id))
             )
             player.onTrackStarted = { id in dataStore.recordPlay(trackID: id) }
-            player.onVideoStarted = { id in dataStore.recordPlay(trackID: id) }
+            player.onVideoStarted = { id in
+                dataStore.recordPlay(trackID: id)
+                showsNowPlaying = true
+            }
         }
         .onChange(of: library.tracks) {
             player.updateQueue($0)
@@ -237,6 +246,40 @@ struct RootView: View {
             }
         case .failure(let error):
             library.importError = error.localizedDescription
+        }
+    }
+}
+
+extension Notification.Name {
+    static let auruTabReselected = Notification.Name("AURUMusicTabReselected")
+}
+
+private struct TabReselectDetector: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> DetectorViewController {
+        DetectorViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: DetectorViewController, context: Context) {}
+
+    final class DetectorViewController: UIViewController, UITabBarControllerDelegate {
+        private weak var previousDelegate: UITabBarControllerDelegate?
+        private var lastIndex: Int?
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            guard let controller = tabBarController, controller.delegate !== self else { return }
+            previousDelegate = controller.delegate
+            lastIndex = controller.selectedIndex
+            controller.delegate = self
+        }
+
+        func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
+            let index = tabBarController.selectedIndex
+            if lastIndex == index {
+                NotificationCenter.default.post(name: .auruTabReselected, object: index)
+            }
+            lastIndex = index
+            previousDelegate?.tabBarController?(tabBarController, didSelect: viewController)
         }
     }
 }

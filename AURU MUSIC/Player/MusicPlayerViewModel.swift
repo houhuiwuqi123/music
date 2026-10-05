@@ -36,16 +36,23 @@ final class MusicPlayerViewModel: ObservableObject {
     private var currentIndex: Int?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
+    private var routeChangeObserver: NSObjectProtocol?
+    private var playbackStatusObserver: AnyCancellable?
 
     init() {
         configureAudioSession()
+        setupAudioSessionObservers()
         setupRemoteTransportControls()
         observePlayback()
+        observePlaybackStatus()
     }
 
     deinit {
         if let timeObserver { playbackPlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+        if let routeChangeObserver { NotificationCenter.default.removeObserver(routeChangeObserver) }
     }
 
     func play(_ track: Track, in tracks: [Track]) {
@@ -219,6 +226,51 @@ final class MusicPlayerViewModel: ObservableObject {
         } catch {
             print("Audio session configuration failed: \(error)")
         }
+    }
+
+    private func setupAudioSessionObservers() {
+        let center = NotificationCenter.default
+        interruptionObserver = center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let rawValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: rawValue), type == .began else { return }
+            Task { @MainActor in self?.synchronizePausedState() }
+        }
+        routeChangeObserver = center.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let rawValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: rawValue),
+                  reason == .oldDeviceUnavailable else { return }
+            Task { @MainActor in
+                self?.playbackPlayer.pause()
+                self?.synchronizePausedState()
+            }
+        }
+    }
+
+    private func observePlaybackStatus() {
+        playbackStatusObserver = playbackPlayer.publisher(for: \.timeControlStatus)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in
+                Task { @MainActor in
+                    guard let self, self.playbackPlayer.currentItem != nil else { return }
+                    let nowPlaying = status == .playing
+                    guard self.isPlaying != nowPlaying else { return }
+                    self.isPlaying = nowPlaying
+                    self.updateNowPlayingInfo()
+                }
+            }
+    }
+
+    private func synchronizePausedState() {
+        isPlaying = false
+        updateNowPlayingInfo()
     }
 
     private func observePlayback() {

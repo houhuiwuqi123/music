@@ -83,6 +83,9 @@ struct FeedSupportView: View {
             let application = UIApplication.shared
             if let paymentURL = URL(string: payload), application.canOpenURL(paymentURL) {
                 application.open(paymentURL)
+            } else if let scannerURL = URL(string: "weixin://scanqrcode"), application.canOpenURL(scannerURL) {
+                application.open(scannerURL)
+                qrMessage = settings.text("qrCopiedHint")
             } else if let wechatURL = URL(string: "weixin://"), application.canOpenURL(wechatURL) {
                 application.open(wechatURL)
                 qrMessage = settings.text("qrCopiedHint")
