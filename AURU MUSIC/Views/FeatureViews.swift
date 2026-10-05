@@ -320,6 +320,9 @@ struct SongsView: View {
                             }
                             .listStyle(.plain)
                             .scrollContentBackground(.hidden)
+                            .safeAreaInset(edge: .bottom, spacing: 0) {
+                                Color.clear.frame(height: player.hasCurrentMedia ? 68 : 0)
+                            }
                             .id("songs-\(scrollResetToken)")
                         }
                     } else if library.videos.isEmpty {
@@ -361,6 +364,9 @@ struct SongsView: View {
                         }
                         .listStyle(.plain)
                         .scrollContentBackground(.hidden)
+                        .safeAreaInset(edge: .bottom, spacing: 0) {
+                            Color.clear.frame(height: player.hasCurrentMedia ? 68 : 0)
+                        }
                         .id("videos-\(scrollResetToken)")
                     }
                 }
@@ -566,6 +572,7 @@ struct TrackDetailView: View {
 
 struct ArtistsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
+    @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var navigationPath: [Artist] = []
@@ -615,6 +622,9 @@ struct ArtistsView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        Color.clear.frame(height: player.hasCurrentMedia ? 68 : 0)
+                    }
                     .id(scrollResetToken)
                 }
             }
@@ -777,6 +787,7 @@ struct ArtistDetailView: View {
 
 struct PlaylistsView: View {
     @EnvironmentObject private var library: LocalMusicLibrary
+    @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var showsCreate = false
@@ -820,6 +831,9 @@ struct PlaylistsView: View {
                 }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        Color.clear.frame(height: player.hasCurrentMedia ? 68 : 0)
+                    }
                     .id(scrollResetToken)
                 }
             }
