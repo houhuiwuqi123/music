@@ -422,12 +422,9 @@ struct SongsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
             guard notification.object as? Int == 1 else { return }
-            if navigationPath.isEmpty, mediaTab == .songs {
-                scrollResetToken += 1
-            } else {
-                navigationPath.removeAll()
-                mediaTab = .songs
-            }
+            navigationPath.removeAll()
+            mediaTab = .songs
+            scrollResetToken += 1
         }
     }
 
@@ -653,11 +650,8 @@ struct ArtistsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
             guard notification.object as? Int == 2 else { return }
-            if navigationPath.isEmpty {
-                scrollResetToken += 1
-            } else {
-                navigationPath.removeAll()
-            }
+            navigationPath.removeAll()
+            scrollResetToken += 1
         }
     }
 }
