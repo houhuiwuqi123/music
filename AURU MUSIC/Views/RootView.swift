@@ -15,7 +15,6 @@ struct RootView: View {
     @State private var searchText = ""
     @State private var showsImporter = false
     @State private var showsSettings = false
-    @State private var showsFeedSupport = false
     @State private var showsRecognition = false
     @State private var showsNowPlaying = false
     @State private var selectedArtist: Artist?
@@ -77,7 +76,6 @@ struct RootView: View {
             onCompletion: handleFileImport
         )
         .sheet(isPresented: $showsSettings) { SettingsView() }
-        .sheet(isPresented: $showsFeedSupport) { FeedSupportView() }
         .fullScreenCover(isPresented: $showsRecognition) { SongRecognitionView() }
         .sheet(item: $selectedArtist) { artist in
             NavigationStack { ArtistDetailView(artist: artist) }
@@ -125,6 +123,9 @@ struct RootView: View {
         .onChange(of: scenePhase) { phase in
             if phase == .active { Task { await library.refreshDocuments() } }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { _ in
+            searchText = ""
+        }
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: searchText)
     }
 
@@ -132,11 +133,6 @@ struct RootView: View {
         HStack(spacing: 10) {
             Button { showsSettings = true } label: {
                 Image(systemName: "gearshape.fill").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
-            }
-            Button { showsFeedSupport = true } label: {
-                Text(settings.text("feedMe"))
-                    .font(.subheadline.bold())
-                    .foregroundStyle(.purple)
             }
             Spacer()
             VStack(spacing: 1) {

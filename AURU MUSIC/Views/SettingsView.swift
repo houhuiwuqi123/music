@@ -1,9 +1,12 @@
 import MessageUI
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
 
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.8"
@@ -48,6 +51,18 @@ struct SettingsView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onAppear { settings.refreshNotificationAuthorization() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { settings.refreshNotificationAuthorization() }
+        }
+        .alert(settings.text("notifications"), isPresented: $settings.showsNotificationSettingsPrompt) {
+            Button(settings.text("cancel"), role: .cancel) {}
+            Button(settings.text("openSettings")) {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            }
+        } message: {
+            Text(settings.text("notificationDenied"))
+        }
     }
 }
 

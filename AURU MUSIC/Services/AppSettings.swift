@@ -21,10 +21,12 @@ final class AppSettings: ObservableObject {
             if notificationsEnabled { requestNotificationPermission() }
         }
     }
+    @Published var showsNotificationSettingsPrompt = false
 
     init() {
         language = Language(rawValue: UserDefaults.standard.string(forKey: "app-language") ?? "en") ?? .english
         notificationsEnabled = UserDefaults.standard.bool(forKey: "notifications-enabled")
+        refreshNotificationAuthorization()
     }
 
     func text(_ key: String) -> String {
@@ -81,14 +83,8 @@ final class AppSettings: ObservableObject {
             "deletePlaylistMessage": ("请选择是否同时处理歌单中的歌曲。", "Choose whether to also remove the songs in this playlist."),
             "renamePlaylist": ("修改歌单名称", "Rename Playlist"),
             "editSongInfo": ("修改歌曲信息", "Edit Song Info"), "artistName": ("艺人名称", "Artist Name"),
-            "feedMe": ("去打赏", "Tip Me"), "feedSupport": ("打赏支持", "Support AURU MUSIC"),
-            "feedThanks": ("感谢你的支持", "Thank you for your support"),
-            "tipMessage": ("创作不易，请多多支持~~\n如果喜欢^^，欢迎用金钱狠狠\"侮辱\"作者，让我看到你们的热情！", "Creating is not easy. Please support the work~~\nIf you enjoy it^^, your support means a lot and keeps the passion alive!"),
-            "tipQRCode": ("打赏二维码", "Tip QR Code"),
-            "openWechatPay": ("识别二维码并打开微信", "Recognize QR Code and Open WeChat"),
-            "qrRecognitionFailed": ("未能识别二维码，请长按图片保存后使用微信扫一扫。", "The QR code could not be recognized. Save it and scan it in WeChat."),
-            "qrCopiedHint": ("二维码内容已复制，请在微信中继续操作。", "The QR content was copied. Continue in WeChat."),
-            "wechatUnavailable": ("未检测到微信，二维码内容已复制。", "WeChat is unavailable. The QR content was copied."),
+            "notificationDenied": ("通知权限已在系统中关闭，请前往系统设置开启。", "Notifications are disabled in system settings. Open Settings to enable them."),
+            "openSettings": ("打开设置", "Open Settings"),
             "songTab": ("歌曲", "Songs"), "videoTab": ("视频", "Videos"),
             "editVideoInfo": ("修改视频信息", "Edit Video Info"), "videoName": ("视频名称", "Video Name"),
             "deleteVideoTitle": ("如何删除这个视频？", "How would you like to remove this video?"),
@@ -105,10 +101,31 @@ final class AppSettings: ObservableObject {
         return language == .chinese ? value.zh : value.en
     }
 
-    private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
-            guard !granted else { return }
+    func refreshNotificationAuthorization() {
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] notificationSettings in
+            guard notificationSettings.authorizationStatus == .denied else { return }
             Task { @MainActor [weak self] in self?.notificationsEnabled = false }
+        }
+    }
+
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] notificationSettings in
+            switch notificationSettings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                break
+            case .notDetermined:
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    guard !granted else { return }
+                    Task { @MainActor [weak self] in self?.notificationsEnabled = false }
+                }
+            case .denied:
+                Task { @MainActor [weak self] in
+                    self?.notificationsEnabled = false
+                    self?.showsNotificationSettingsPrompt = true
+                }
+            @unknown default:
+                Task { @MainActor [weak self] in self?.notificationsEnabled = false }
+            }
         }
     }
 

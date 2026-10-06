@@ -8,6 +8,7 @@ struct HomeView: View {
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var rankingTab: MediaLibraryTab = .songs
+    @State private var scrollResetToken = 0
 
     var body: some View {
         NavigationStack {
@@ -87,6 +88,12 @@ struct HomeView: View {
                 .padding(.bottom, 120)
             }
             .scrollContentBackground(.hidden)
+            .id(scrollResetToken)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
+            guard notification.object as? Int == 0 else { return }
+            rankingTab = .songs
+            scrollResetToken += 1
         }
     }
 
@@ -410,6 +417,8 @@ struct SongsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
             guard notification.object as? Int == 1 else { return }
+            navigationPath.removeAll()
+            mediaTab = .songs
             scrollResetToken += 1
         }
     }
@@ -602,8 +611,8 @@ struct ArtistsView: View {
                                         VStack(alignment: .leading, spacing: 5) {
                                             Text(artist.name).font(.headline)
                                             HStack(spacing: 10) {
-                                                Label("\(artist.tracks.count)", systemImage: "music.note")
-                                                Label("\(artist.videos.count)", systemImage: "play.rectangle.fill")
+                                                Text("\(artist.tracks.count) \(settings.text("tracks"))")
+                                                Text("\(artist.videos.count) \(settings.text("videos"))")
                                             }
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
@@ -632,7 +641,8 @@ struct ArtistsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
             guard notification.object as? Int == 2 else { return }
-            if navigationPath.isEmpty { scrollResetToken += 1 }
+            navigationPath.removeAll()
+            scrollResetToken += 1
         }
     }
 }
@@ -868,7 +878,8 @@ struct PlaylistsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
             guard notification.object as? Int == 3 else { return }
-            if navigationPath.isEmpty { scrollResetToken += 1 }
+            navigationPath.removeAll()
+            scrollResetToken += 1
         }
     }
 
