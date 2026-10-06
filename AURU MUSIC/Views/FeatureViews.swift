@@ -256,7 +256,7 @@ struct SongsView: View {
     @State private var deletingVideo: LocalVideo?
     @State private var editedVideoTitle = ""
     @State private var editedVideoArtist = ""
-    @State private var trackSort: TrackSortOption = .title
+    @AppStorage("music-library-sort-option") private var trackSort: TrackSortOption = .title
     @State private var scrollResetToken = 0
 
     private var sortedTracks: [Track] { trackSort.sorted(library.tracks, using: dataStore) }
@@ -415,11 +415,19 @@ struct SongsView: View {
                 Button(settings.text("cancel"), role: .cancel) { deletingVideo = nil }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
+        .onReceive(NotificationCenter.default.publisher(for: .auruTabSelected)) { notification in
             guard notification.object as? Int == 1 else { return }
             navigationPath.removeAll()
             mediaTab = .songs
-            scrollResetToken += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
+            guard notification.object as? Int == 1 else { return }
+            if navigationPath.isEmpty, mediaTab == .songs {
+                scrollResetToken += 1
+            } else {
+                navigationPath.removeAll()
+                mediaTab = .songs
+            }
         }
     }
 
@@ -585,7 +593,7 @@ struct ArtistsView: View {
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
     @State private var navigationPath: [Artist] = []
-    @State private var artistSort: ArtistSortOption = .name
+    @AppStorage("artist-sort-option") private var artistSort: ArtistSortOption = .name
     @State private var scrollResetToken = 0
 
     var body: some View {
@@ -639,10 +647,17 @@ struct ArtistsView: View {
             }
             .navigationDestination(for: Artist.self) { ArtistDetailView(artist: $0) }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
+        .onReceive(NotificationCenter.default.publisher(for: .auruTabSelected)) { notification in
             guard notification.object as? Int == 2 else { return }
             navigationPath.removeAll()
-            scrollResetToken += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
+            guard notification.object as? Int == 2 else { return }
+            if navigationPath.isEmpty {
+                scrollResetToken += 1
+            } else {
+                navigationPath.removeAll()
+            }
         }
     }
 }

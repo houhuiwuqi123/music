@@ -3,7 +3,18 @@ import UIKit
 import UniformTypeIdentifiers
 
 struct RootView: View {
-    enum Tab: Hashable { case home, songs, artists, playlists }
+    enum Tab: Hashable {
+        case home, songs, artists, playlists
+
+        var index: Int {
+            switch self {
+            case .home: return 0
+            case .songs: return 1
+            case .artists: return 2
+            case .playlists: return 3
+            }
+        }
+    }
 
     @EnvironmentObject private var library: LocalMusicLibrary
     @EnvironmentObject private var player: MusicPlayerViewModel
@@ -122,6 +133,10 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { phase in
             if phase == .active { Task { await library.refreshDocuments() } }
+        }
+        .onChange(of: selectedTab) { tab in
+            searchText = ""
+            NotificationCenter.default.post(name: .auruTabSelected, object: tab.index)
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { _ in
             searchText = ""
@@ -245,6 +260,7 @@ struct RootView: View {
 }
 
 extension Notification.Name {
+    static let auruTabSelected = Notification.Name("AURUMusicTabSelected")
     static let auruTabReselected = Notification.Name("AURUMusicTabReselected")
 }
 
