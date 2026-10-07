@@ -24,6 +24,8 @@ final class MusicPlayerViewModel: NSObject, ObservableObject {
 
     var onTrackStarted: ((UUID) -> Void)?
     var onVideoStarted: ((UUID) -> Void)?
+    var onTrackCompleted: ((UUID) -> Void)?
+    var onVideoCompleted: ((UUID) -> Void)?
 
     var hasCurrentMedia: Bool { currentTrack != nil || currentVideo != nil }
     var currentTitle: String { currentTrack?.title ?? currentVideo?.title ?? "" }
@@ -36,6 +38,7 @@ final class MusicPlayerViewModel: NSObject, ObservableObject {
     private var currentIndex: Int?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
+    private var playbackCycleID: UUID?
     private var playbackStatusObserver: AnyCancellable?
 
     override init() {
@@ -181,6 +184,11 @@ final class MusicPlayerViewModel: NSObject, ObservableObject {
     }
 
     func clearCurrentMedia() {
+        playbackCycleID = nil
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+            self.endObserver = nil
+        }
         playbackPlayer.pause()
         playbackPlayer.replaceCurrentItem(with: nil)
         currentTrack = nil
@@ -352,20 +360,28 @@ final class MusicPlayerViewModel: NSObject, ObservableObject {
         if let endObserver {
             NotificationCenter.default.removeObserver(endObserver)
         }
+        let cycleID = UUID()
+        playbackCycleID = cycleID
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: item,
             queue: .main
-        ) { _ in
-            Task { @MainActor [weak self] in
-                self?.handlePlaybackEnded()
+        ) { [weak self, weak item] _ in
+            Task { @MainActor [weak self, weak item] in
+                guard let self, let item else { return }
+                self.handlePlaybackEnded(for: item, cycleID: cycleID)
             }
         }
     }
 
-    private func handlePlaybackEnded() {
+    private func handlePlaybackEnded(for item: AVPlayerItem, cycleID: UUID) {
+        guard playbackPlayer.currentItem === item, playbackCycleID == cycleID else { return }
+        playbackCycleID = nil
+        if let id = currentTrack?.id { onTrackCompleted?(id) }
+        if let id = currentVideo?.id { onVideoCompleted?(id) }
         switch repeatMode {
         case .one:
+            observePlaybackEnd(for: item)
             seek(to: 0)
             playbackPlayer.play()
             isPlaying = true

@@ -249,6 +249,7 @@ struct SongsView: View {
     @EnvironmentObject private var settings: AppSettings
     @State private var navigationPath: [Track] = []
     @State private var renamingTrack: Track?
+    @State private var playlistTrack: Track?
     @State private var deletingTrack: Track?
     @State private var editedName = ""
     @State private var mediaTab: MediaLibraryTab = .songs
@@ -298,16 +299,8 @@ struct SongsView: View {
                                         Menu {
                                             Button { navigationPath.append(track) } label: { Label(settings.text("details"), systemImage: "info.circle") }
                                             if !dataStore.playlists.isEmpty {
-                                                Menu(settings.text("addPlaylist")) {
-                                                    ForEach(dataStore.playlists) { playlist in
-                                                        Button { dataStore.add(track.id, to: playlist.id) } label: {
-                                                            if playlist.trackIDs.contains(track.id) {
-                                                                Label(playlist.name, systemImage: "checkmark")
-                                                            } else {
-                                                                Text(playlist.name)
-                                                            }
-                                                        }
-                                                    }
+                                                Button { playlistTrack = track } label: {
+                                                    Label(settings.text("addPlaylist"), systemImage: "text.badge.plus")
                                                 }
                                             }
                                             Button { player.insertNext(track) } label: { Label(settings.text("playNext"), systemImage: "text.line.first.and.arrowtriangle.forward") }
@@ -380,6 +373,9 @@ struct SongsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
             .navigationDestination(for: Track.self) { TrackDetailView(trackID: $0.id) }
+            .sheet(item: $playlistTrack) { track in
+                PlaylistAssignmentView(trackID: track.id)
+            }
             .sheet(item: $renamingTrack) { track in
                 RenameTrackSheet(name: $editedName) {
                     library.renameTrack(id: track.id, to: editedName)
@@ -433,6 +429,58 @@ struct SongsView: View {
         library.removeTrack(id: track.id, deleteFile: deleteFile)
         dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)), validVideoIDs: Set(library.videos.map(\.id)))
         deletingTrack = nil
+    }
+}
+
+struct PlaylistMembershipRows: View {
+    let trackID: UUID
+    @EnvironmentObject private var dataStore: MusicDataStore
+
+    var body: some View {
+        ForEach(dataStore.playlists) { playlist in
+            Button {
+                dataStore.toggle(trackID, in: playlist.id)
+            } label: {
+                HStack {
+                    Text(playlist.name)
+                    Spacer()
+                    Image(systemName: playlist.trackIDs.contains(trackID) ? "checkmark.circle.fill" : "plus.circle")
+                        .foregroundStyle(playlist.trackIDs.contains(trackID) ? Color.purple : Color.secondary)
+                }
+                .contentShape(Rectangle())
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(playlist.trackIDs.contains(trackID) ? .isSelected : [])
+        }
+    }
+}
+
+struct PlaylistAssignmentView: View {
+    let trackID: UUID
+    @EnvironmentObject private var dataStore: MusicDataStore
+    @EnvironmentObject private var settings: AppSettings
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if dataStore.playlists.isEmpty {
+                    Text(settings.text("noPlaylists")).foregroundStyle(.secondary)
+                } else {
+                    PlaylistMembershipRows(trackID: trackID)
+                }
+            }
+            .navigationTitle(settings.text("addPlaylist"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(settings.text("done")) { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
@@ -500,24 +548,7 @@ struct TrackDetailView: View {
                     if !dataStore.playlists.isEmpty {
                         VStack(alignment: .leading, spacing: 3) {
                             SectionHeader(title: settings.text("addPlaylist"))
-                            ForEach(dataStore.playlists) { playlist in
-                                Button {
-                                    dataStore.add(track.id, to: playlist.id)
-                                } label: {
-                                    HStack {
-                                        Text(playlist.name)
-                                        Spacer()
-                                        if playlist.trackIDs.contains(track.id) {
-                                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.purple)
-                                        } else {
-                                            Image(systemName: "plus.circle").foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.vertical, 10)
-                                .disabled(playlist.trackIDs.contains(track.id))
-                            }
+                            PlaylistMembershipRows(trackID: track.id)
                         }
                         .padding(18).glassCard()
                     }

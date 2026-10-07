@@ -56,6 +56,15 @@ final class MusicDataStore: ObservableObject {
         save(playlists, file: playlistsFile)
     }
 
+    func toggle(_ trackID: UUID, in playlistID: UUID) {
+        guard let playlist = playlists.first(where: { $0.id == playlistID }) else { return }
+        if playlist.trackIDs.contains(trackID) {
+            remove(trackID, from: playlistID)
+        } else {
+            add(trackID, to: playlistID)
+        }
+    }
+
     func updateArtwork(_ artworkData: Data, for playlistID: UUID) {
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         playlists[index].artworkData = artworkData
@@ -101,10 +110,16 @@ final class MusicDataStore: ObservableObject {
         }
     }
 
+    func recordPlaybackStarted(trackID: UUID) {
+        var stats = playStats[trackID] ?? TrackPlayStats()
+        stats.lastPlayedAt = Date()
+        playStats[trackID] = stats
+        save(playStats, file: statsFile)
+    }
+
     func recordPlay(trackID: UUID) {
         var stats = playStats[trackID] ?? TrackPlayStats()
         stats.playCount += 1
-        stats.lastPlayedAt = Date()
         playStats[trackID] = stats
         save(playStats, file: statsFile)
     }

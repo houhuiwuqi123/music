@@ -2,8 +2,8 @@ import SwiftUI
 
 struct MiniPlayerView: View {
     @ObservedObject var player: MusicPlayerViewModel
-    @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
+    @State private var playlistTrack: Track?
     let onExpand: () -> Void
 
     var body: some View {
@@ -38,21 +38,7 @@ struct MiniPlayerView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let track = player.currentTrack {
-                    Menu {
-                        if dataStore.playlists.isEmpty {
-                            Text(settings.text("noPlaylists"))
-                        } else {
-                            ForEach(dataStore.playlists) { playlist in
-                                Button { dataStore.add(track.id, to: playlist.id) } label: {
-                                    if playlist.trackIDs.contains(track.id) {
-                                        Label(playlist.name, systemImage: "checkmark")
-                                    } else {
-                                        Text(playlist.name)
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
+                    Button { playlistTrack = track } label: {
                         Image(systemName: "text.badge.plus")
                             .font(.body.weight(.semibold))
                             .frame(width: 32, height: 38)
@@ -77,6 +63,9 @@ struct MiniPlayerView: View {
                 .accessibilityLabel("Next track")
             }
             .padding(.horizontal, 12)
+            .sheet(item: $playlistTrack) { track in
+                PlaylistAssignmentView(trackID: track.id)
+            }
             .padding(.vertical, 8)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay { RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.12)) }

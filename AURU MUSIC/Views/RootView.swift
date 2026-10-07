@@ -111,11 +111,13 @@ struct RootView: View {
                 validTrackIDs: Set(library.tracks.map(\.id)),
                 validVideoIDs: Set(library.videos.map(\.id))
             )
-            player.onTrackStarted = { id in dataStore.recordPlay(trackID: id) }
+            player.onTrackStarted = { id in dataStore.recordPlaybackStarted(trackID: id) }
             player.onVideoStarted = { id in
-                dataStore.recordPlay(trackID: id)
+                dataStore.recordPlaybackStarted(trackID: id)
                 showsNowPlaying = true
             }
+            player.onTrackCompleted = { id in dataStore.recordPlay(trackID: id) }
+            player.onVideoCompleted = { id in dataStore.recordPlay(trackID: id) }
         }
         .onChange(of: library.tracks) {
             player.updateQueue($0)

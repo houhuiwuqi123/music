@@ -11,8 +11,7 @@ final class LocalMusicLibrary: ObservableObject {
     @Published private(set) var isImporting = false
     @Published var importError: String?
 
-    // `.item` keeps provider-specific audio/video types selectable. Files are
-    // validated after selection before being copied into the app sandbox.
+    // `.item` also allows LRC sidecars and provider-specific media types.
     static let importableTypes: [UTType] = [.item]
 
     static let supportedAudioExtensions: Set<String> = [
@@ -48,12 +47,17 @@ final class LocalMusicLibrary: ObservableObject {
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             )?
             .compactMap { $0 as? URL }
-            .filter { Self.isSupported($0) && !hiddenTrackPaths.contains($0.standardizedFileURL.path) } ?? []
+            .filter {
+                (Self.isSupported($0) || Self.isLyrics($0))
+                    && !hiddenTrackPaths.contains($0.standardizedFileURL.path)
+            } ?? []
 
             let uniqueURLs = Dictionary(grouping: discovered, by: { $0.standardizedFileURL.path })
                 .compactMap { $0.value.first }
             let knownPaths = Set((tracks.map(\.fileURL) + videos.map(\.fileURL)).map { $0.standardizedFileURL.path })
-            let newURLs = uniqueURLs.filter { !knownPaths.contains($0.standardizedFileURL.path) }
+            let newURLs = uniqueURLs.filter {
+                Self.isSupported($0) && !knownPaths.contains($0.standardizedFileURL.path)
+            }
             var failures: [String] = []
 
             for url in newURLs {
@@ -65,15 +69,28 @@ final class LocalMusicLibrary: ObservableObject {
                         if !containsDuplicate(of: track, in: tracks) { tracks.append(track) }
                     }
                 } catch {
-                    failures.append(url.lastPathComponent)
+                    failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
                 }
             }
             tracks.removeAll { !fileManager.fileExists(atPath: $0.fileURL.path) }
             videos.removeAll { !fileManager.fileExists(atPath: $0.fileURL.path) }
+            for url in uniqueURLs.filter({ Self.isLyrics($0) }) {
+                do {
+                    guard let track = try matchingLyricsTrack(for: url),
+                          track.lyricsWereEdited != true,
+                          track.lyrics?.isEmpty != false else { continue }
+                    let lyrics = try readLyrics(from: url)
+                    if let index = tracks.firstIndex(where: { $0.id == track.id }) {
+                        tracks[index].lyrics = lyrics
+                    }
+                } catch {
+                    failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+                }
+            }
             tracks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
             videos.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
             saveLibrary()
-            if !failures.isEmpty { importError = "Unable to read: \(failures.joined(separator: ", "))" }
+            reportFailures(failures, action: "read")
         } catch {
             importError = error.localizedDescription
         }
@@ -90,8 +107,9 @@ final class LocalMusicLibrary: ObservableObject {
             var imported: [Track] = []
             var importedVideos: [LocalVideo] = []
             var failures: [String] = []
+            var sourceTrackIDs: [URL: UUID] = [:]
 
-            for sourceURL in urls {
+            for sourceURL in urls where !Self.isLyrics(sourceURL) {
                 guard Self.isSupported(sourceURL) else {
                     failures.append(sourceURL.lastPathComponent)
                     continue
@@ -100,24 +118,41 @@ final class LocalMusicLibrary: ObservableObject {
                     let result = try await importFile(sourceURL, into: folder)
                     switch result {
                     case .audio(let track):
-                        if containsDuplicate(of: track, in: tracks + imported) {
+                        if let existing = (tracks + imported).first(where: {
+                            duplicateSignature(for: $0) == duplicateSignature(for: track)
+                        }) {
+                            sourceTrackIDs[sourceURL] = existing.id
                             try? fileManager.removeItem(at: track.fileURL)
                         } else {
+                            sourceTrackIDs[sourceURL] = track.id
                             imported.append(track)
                         }
                     case .video(let video): importedVideos.append(video)
                     }
                 } catch {
-                    failures.append(sourceURL.lastPathComponent)
+                    failures.append("\(sourceURL.lastPathComponent): \(error.localizedDescription)")
                 }
             }
 
             tracks.append(contentsOf: imported)
             videos.append(contentsOf: importedVideos)
+            for sourceURL in urls where Self.isLyrics(sourceURL) {
+                do {
+                    guard let track = try matchingLyricsTrack(for: sourceURL, sourceTrackIDs: sourceTrackIDs) else {
+                        throw LyricsImportError.noMatchingTrack
+                    }
+                    let lyrics = try readLyrics(from: sourceURL)
+                    let destination = track.fileURL.deletingPathExtension().appendingPathExtension("lrc")
+                    try Data(lyrics.utf8).write(to: destination, options: .atomic)
+                    updateLyrics(lyrics, for: track.id)
+                } catch {
+                    failures.append("\(sourceURL.lastPathComponent): \(error.localizedDescription)")
+                }
+            }
             tracks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
             videos.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
             saveLibrary()
-            if !failures.isEmpty { importError = "Unable to import: \(failures.joined(separator: ", "))" }
+            reportFailures(failures, action: "import")
         } catch {
             importError = error.localizedDescription
         }
@@ -279,6 +314,60 @@ final class LocalMusicLibrary: ObservableObject {
         return try readResult.get()
     }
 
+    private enum LyricsImportError: LocalizedError {
+        case noMatchingTrack
+        case ambiguousMatch
+
+        var errorDescription: String? {
+            switch self {
+            case .noMatchingTrack: return "No song with the same filename. Import the matching song first or select it together with the lyrics."
+            case .ambiguousMatch: return "Multiple songs have the same filename. Select the matching song together with the lyrics."
+            }
+        }
+    }
+
+    private func readLyrics(from url: URL) throws -> String {
+        let data = try readSecurityScopedData(from: url)
+        guard let lyrics = String(data: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        return lyrics
+    }
+
+    private func matchingLyricsTrack(for url: URL, sourceTrackIDs: [URL: UUID] = [:]) throws -> Track? {
+        let stem = Self.lyricsStem(for: url)
+        let directory = url.deletingLastPathComponent().standardizedFileURL
+        let selectedSources = sourceTrackIDs.filter { Self.lyricsStem(for: $0.key) == stem }
+        let nearbySources = selectedSources.filter {
+            $0.key.deletingLastPathComponent().standardizedFileURL == directory
+        }
+        let selectedIDs = Set((nearbySources.isEmpty ? selectedSources : nearbySources).values)
+        if selectedIDs.count > 1 { throw LyricsImportError.ambiguousMatch }
+        if let id = selectedIDs.first { return tracks.first { $0.id == id } }
+
+        let candidates = tracks.filter { Self.lyricsStem(for: $0.fileURL) == stem }
+        let nearby = candidates.filter {
+            $0.fileURL.deletingLastPathComponent().standardizedFileURL == directory
+        }
+        let matches = nearby.isEmpty ? candidates : nearby
+        if matches.count > 1 { throw LyricsImportError.ambiguousMatch }
+        return matches.first
+    }
+
+    private static func lyricsStem(for url: URL) -> String {
+        url.deletingPathExtension().lastPathComponent
+            .precomposedStringWithCanonicalMapping
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    private func reportFailures(_ failures: [String], action: String) {
+        guard !failures.isEmpty else { return }
+        let summary = failures.prefix(5).joined(separator: "\n")
+        let remaining = failures.count > 5 ? "\n… \(failures.count - 5) more failed files." : ""
+        importError = "Unable to \(action) \(failures.count) file(s):\n\(summary)\(remaining)"
+    }
+
     private func makeTrack(from url: URL) async throws -> Track {
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
@@ -293,7 +382,6 @@ final class LocalMusicLibrary: ObservableObject {
         let album = await metadata.text(for: .commonIdentifierAlbumName) ?? "Unknown Album"
         let artworkData = await metadata.data(for: .commonIdentifierArtwork)
         let embeddedLyrics = await metadata.text(containingIdentifier: "lyrics")
-        let sidecarLyrics = try? String(contentsOf: url.deletingPathExtension().appendingPathExtension("lrc"), encoding: .utf8)
 
         return Track(
             title: title,
@@ -302,7 +390,7 @@ final class LocalMusicLibrary: ObservableObject {
             duration: duration.isFinite ? duration : 0,
             fileURL: url,
             artworkData: artworkData,
-            lyrics: embeddedLyrics ?? sidecarLyrics
+            lyrics: embeddedLyrics
         )
     }
 
@@ -524,7 +612,11 @@ final class LocalMusicLibrary: ObservableObject {
     }
 
     private static func isSupported(_ url: URL) -> Bool {
-        isAudio(url) || isVideo(url)
+        !isLyrics(url) && (isAudio(url) || isVideo(url))
+    }
+
+    private static func isLyrics(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "lrc"
     }
 
     private static func isAudio(_ url: URL) -> Bool {

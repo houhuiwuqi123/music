@@ -10,8 +10,9 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 - Reads title, artist, album, duration, and embedded artwork with `AVURLAsset`.
 - Plays through `AVPlayer` with play/pause, seeking, previous/next, shuffle, list repeat, and repeat-one modes.
 - Provides Home, Songs, Artists, and Playlists tabs with global search.
-- Tracks recent plays and play-count rankings locally.
+- Tracks recent plays when playback starts; increments song/video play counts only when AVPlayer reaches the end. Skipping, pausing, or switching media does not increment counts. Each completed repeat counts once.
 - Supports persistent playlists; a song can belong to multiple playlists.
+- The mini-player and song-row playlist selector stays open for multiple selections. Tap an already selected playlist to remove the song; tap Done or dismiss the sheet to close it. Song details use the same membership toggle.
 - Supports custom covers for songs and playlists through the native Files importer.
 - Provides song details with metadata, playlist assignment, and permanent local deletion.
 - Provides playlist details with cover upload and add/remove song management.
@@ -22,6 +23,7 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 - Empty artist and playlist data no longer render empty glass cards.
 - The app icon asset is configured at `AURU MUSIC/Assets.xcassets/AppIcon.appiconset/AppIcon.png`.
 - Reads embedded lyrics and supports uploaded UTF-8 LRC/text lyrics with synchronized scrolling in Now Playing.
+- Imports UTF-8 `.lrc` files as lyrics, never as audio/video. Batch selection associates lyrics with the same filename stem, regardless of selection order, including deduplicated songs and renamed local copies. Standalone LRC imports require an unambiguous matching song; missing/ambiguous matches are reported rather than assigned to an arbitrary song.
 - Cleans deleted songs out of playlists and playback statistics automatically.
 - Shows local videos in global search and on the matching artist page, then plays them with the system video player.
 - Includes a floating mini player and full Now Playing screen in a dark glass design.
@@ -49,6 +51,8 @@ The app cannot read arbitrary files elsewhere on an iPhone because iOS apps run 
 
 The project enables both `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`. The scanner accepts every file type declared by iOS as audio or movie. It also explicitly recognizes common audio extensions including MP3, AAC, M4A/M4B, WAV, AIFF, CAF, FLAC, AC3/EAC3, AMR, OGG/OGA, Opus and WMA, plus common video containers including MP4, MOV, M4V, MPEG, 3GP, AVI, MKV, WebM, MTS/M2TS and TS. FLAC is supported directly through AVFoundation on current iOS versions. Playback of any container still requires its internal codec to be supported by the installed iOS version.
 
+For lyrics, select `Song.mp3` and `Song.lrc` together, or import `Song.lrc` after importing the matching song. Imported lyrics are stored next to the local audio copy and persisted in its library entry. During Documents scans, same-stem LRC files fill missing lyrics on both new and already indexed songs; a match in the same directory takes precedence. Embedded lyrics and manually edited/uploaded lyrics are preserved during scans. Unmatched sidecars are left untouched, so they can be picked up after their song is added. Import/scan error alerts show at most five file details plus the remaining failure count.
+
 ### Development and Simulator files
 
 - In Simulator, first place media in a location visible to the simulated **Files** app, such as iCloud Drive or a provider exposed in Browse, then use the app's import button.
@@ -73,3 +77,10 @@ The project enables both `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsI
 ## Notes
 
 The repository is generated on Windows, where Xcode and the iOS SDK are unavailable. Build and signing must be performed on macOS. Add an AppIcon asset in Xcode before App Store distribution.
+
+### Regression checks on iOS
+
+- Import an audio file and its same-stem UTF-8 LRC together (select lyrics first as well as audio first). The lyrics should display without an audio-read error. Repeat with an already imported/deduplicated song, and with an existing local filename collision.
+- Copy audio/LRC pairs into Documents using file sharing. Foreground the app, then add an LRC for an already indexed song and scan again. Check lyrics attach without replacing embedded or manually uploaded lyrics. Try uppercase `.LRC`, unmatched lyrics, invalid UTF-8, and ambiguous same-stem audio files; failed imports should explain the issue.
+- Start, pause/resume, skip, and switch songs/videos before the end: counts should not change, while recently played songs should update at start. Let playback finish in list/repeat-one modes: each completion should add exactly one play, including in the background.
+- Open the mini-player playlist selector, add the song to multiple playlists, then tap a checked playlist again. The check should disappear immediately, the sheet should stay open until Done/dismissal, and changes should survive relaunch. Verify the same toggle behavior from song rows and song details.
