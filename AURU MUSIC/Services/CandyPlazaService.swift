@@ -19,6 +19,15 @@ struct CandyPlazaHistory: Codable, Identifiable {
     var localURL: URL? = nil
 }
 
+struct CandyPlazaListening: Codable, Identifiable, Equatable {
+    var clientId: String
+    var ownerName: String
+    var title: String
+    var artist: String
+    var isPlaying: Bool
+    var id: String { clientId }
+}
+
 struct CandyPlazaDownload: Identifiable {
     enum State {
         case downloading
@@ -41,6 +50,9 @@ private struct CandyPlazaMessage: Codable {
     var to: String? = nil
     var from: String? = nil
     var data: String? = nil
+    var listening: CandyPlazaListening? = nil
+    var listeners: [CandyPlazaListening]? = nil
+    var error: String? = nil
 
     init(
         type: String,
@@ -49,7 +61,8 @@ private struct CandyPlazaMessage: Codable {
         files: [CandyPlazaFile]? = nil,
         to: String? = nil,
         from: String? = nil,
-        data: String? = nil
+        data: String? = nil,
+        listening: CandyPlazaListening? = nil
     ) {
         self.type = type
         self.file = file
@@ -58,6 +71,7 @@ private struct CandyPlazaMessage: Codable {
         self.to = to
         self.from = from
         self.data = data
+        self.listening = listening
     }
 }
 
@@ -102,6 +116,9 @@ final class CandyPlazaService: ObservableObject {
 
     @Published private(set) var connectionState: ConnectionState = .disconnected
     @Published private(set) var connectionError: String?
+    @Published private(set) var listeners: [CandyPlazaListening] = []
+    @Published private(set) var supportsListening = false
+    @Published private(set) var sharesListening: Bool
     @Published private(set) var files: [CandyPlazaFile] = []
     @Published private(set) var shares: [String: CandyPlazaFile] = [:]
     @Published private(set) var downloads: [String: CandyPlazaDownload] = [:]
@@ -119,6 +136,8 @@ final class CandyPlazaService: ObservableObject {
     private var socket: URLSessionWebSocketTask?
     private var reconnectTask: Task<Void, Never>?
     private var connectionTimeoutTask: Task<Void, Never>?
+    private var listeningHeartbeatTask: Task<Void, Never>?
+    private var localListening: CandyPlazaListening?
     private var outgoingMessages: [String] = []
     private var outgoingMessageIndex = 0
     private var isSendingMessage = false
@@ -138,6 +157,7 @@ final class CandyPlazaService: ObservableObject {
         let generatedNickname = "访客\(Int.random(in: 1000...9999))"
         let nickname = storedNickname ?? generatedNickname
         self.nickname = nickname
+        sharesListening = defaults.object(forKey: "candy_shares_listening") as? Bool ?? true
         if storedNickname == nil {
             defaults.set(nickname, forKey: "candy_nickname")
         }
@@ -157,10 +177,25 @@ final class CandyPlazaService: ObservableObject {
         hasStarted = true
         clientID = UUID().uuidString.lowercased()
         openSocket()
+        listeningHeartbeatTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: 30_000_000_000)
+                } catch {
+                    return
+                }
+                guard let self, self.hasStarted else { return }
+                self.sendListening()
+            }
+        }
     }
 
     func stop() {
         hasStarted = false
+        listeningHeartbeatTask?.cancel()
+        listeningHeartbeatTask = nil
+        listeners = []
+        supportsListening = false
         reconnectTask?.cancel()
         reconnectTask = nil
         connectionTimeoutTask?.cancel()
@@ -189,6 +224,30 @@ final class CandyPlazaService: ObservableObject {
     func retryConnection() {
         stop()
         start()
+    }
+
+    func setSharesListening(_ enabled: Bool) {
+        sharesListening = enabled
+        userDefaults.set(enabled, forKey: "candy_shares_listening")
+        sendListening()
+    }
+
+    func updateListening(track: Track?, isPlaying: Bool) {
+        let state = track.map {
+            CandyPlazaListening(
+                clientId: "", ownerName: nickname,
+                title: String($0.title.prefix(300)),
+                artist: String($0.artist.prefix(300)), isPlaying: isPlaying
+            )
+        }
+        guard state != localListening else { return }
+        localListening = state
+        sendListening()
+    }
+
+    private func sendListening() {
+        guard connectionState == .connected, supportsListening else { return }
+        send(CandyPlazaMessage(type: "listening", listening: sharesListening ? localListening : nil))
     }
 
     func clearPublishHistory() {
@@ -321,6 +380,8 @@ final class CandyPlazaService: ObservableObject {
             return
         }
         connectionState = .connecting
+        supportsListening = false
+        listeners = []
         shouldRepublishShares = true
         outgoingMessages.removeAll()
         outgoingMessageIndex = 0
@@ -376,6 +437,8 @@ final class CandyPlazaService: ObservableObject {
         outgoingMessageIndex = 0
         isSendingMessage = false
         connectionState = .disconnected
+        listeners = []
+        supportsListening = false
         connectionError = message
         files = []
         for fileID in Array(downloads.keys) {
@@ -409,6 +472,15 @@ final class CandyPlazaService: ObservableObject {
 
     private func handle(_ message: CandyPlazaMessage) {
         switch message.type {
+        case "listeners":
+            let firstSnapshot = !supportsListening
+            supportsListening = true
+            listeners = (message.listeners ?? [])
+                .filter { $0.clientId != clientID }
+                .sorted { $0.clientId < $1.clientId }
+            if firstSnapshot { sendListening() }
+        case "error":
+            errorMessage = message.error ?? "广场服务器拒绝了请求。"
         case "plaza":
             connectionTimeoutTask?.cancel()
             connectionTimeoutTask = nil

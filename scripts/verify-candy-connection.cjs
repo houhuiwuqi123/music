@@ -26,6 +26,19 @@ function verifySource() {
     assert.match(service, /func retryConnection\(\) \{\s+stop\(\)\s+start\(\)/);
     assert.ok(view.includes('plaza.connectionError') && view.includes('plaza.retryConnection()'));
     assert.ok(!plist.includes('NSExceptionAllowsInsecureHTTPLoads'));
+    assert.ok(service.includes('as? Bool ?? true'));
+    assert.ok(service.includes('userDefaults.set(enabled, forKey: "candy_shares_listening")'));
+    assert.ok(service.includes('listening: sharesListening ? localListening : nil'));
+    assert.ok(service.includes('30_000_000_000'));
+    assert.ok(service.includes('case "listeners":'));
+    assert.ok(service.includes('.filter { $0.clientId != clientID }'));
+    assert.ok(service.includes('if firstSnapshot { sendListening() }'));
+    const listeningUpdate = service.slice(service.indexOf('func updateListening('), service.indexOf('private func sendListening('));
+    assert.ok(!listeningUpdate.includes('fileURL') && !listeningUpdate.includes('artworkData'));
+    const rootView = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'RootView.swift'), 'utf8');
+    assert.ok(rootView.includes('Publishers.CombineLatest(player.$currentTrack, player.$isPlaying)'));
+    assert.ok(rootView.includes('plaza.start()'));
+    assert.ok(view.includes('plaza.setSharesListening($0)') && view.includes('ForEach(plaza.listeners)'));
     console.log('PASS: client source/config regression checks (not a Swift build).');
 }
 

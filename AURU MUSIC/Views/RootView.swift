@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import UIKit
 import UniformTypeIdentifiers
 
@@ -21,6 +22,7 @@ struct RootView: View {
     @EnvironmentObject private var player: MusicPlayerViewModel
     @EnvironmentObject private var dataStore: MusicDataStore
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var plaza: CandyPlazaService
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var selectedTab: Tab = .home
@@ -106,6 +108,7 @@ struct RootView: View {
             Text(library.importError ?? "Unknown error")
         }
         .task {
+            plaza.start()
             await library.refreshDocuments()
             player.updateQueue(library.tracks)
             player.updateVideoQueue(library.videos)
@@ -127,6 +130,9 @@ struct RootView: View {
                 validTrackIDs: Set($0.map(\.id)),
                 validVideoIDs: Set(library.videos.map(\.id))
             )
+        }
+        .onReceive(Publishers.CombineLatest(player.$currentTrack, player.$isPlaying)) { state in
+            plaza.updateListening(track: state.0, isPlaying: state.1)
         }
         .onChange(of: library.videos) { videos in
             player.updateVideoQueue(videos)

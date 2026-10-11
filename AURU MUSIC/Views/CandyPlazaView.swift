@@ -21,6 +21,7 @@ struct CandyPlazaView: View {
         ScrollView {
             VStack(spacing: 16) {
                 header
+                listeningSection
                 if let connectionError = plaza.connectionError {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(connectionError)
@@ -109,6 +110,47 @@ struct CandyPlazaView: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    private var listeningSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("公开正在听", isOn: Binding(
+                get: { plaza.sharesListening },
+                set: { plaza.setSharesListening($0) }
+            ))
+            .tint(.purple)
+            Text("默认公开歌曲名、艺人与播放状态，不分享音频文件。关闭后停止公开。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("大家正在听").font(.headline)
+            if plaza.connectionState != .connected {
+                Text("连接广场后查看其他用户正在听的歌曲")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if !plaza.supportsListening {
+                Text("服务器尚未启用听歌状态，请更新信令后端。")
+                    .font(.caption).foregroundStyle(.orange)
+            } else if plaza.listeners.isEmpty {
+                Text("暂时没有其他用户公开正在听的歌曲")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(plaza.listeners) { listener in
+                    HStack(spacing: 12) {
+                        Image(systemName: listener.isPlaying ? "waveform" : "pause.fill")
+                            .foregroundStyle(.purple)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(listener.ownerName).font(.caption.weight(.semibold))
+                            Text(listener.title).font(.subheadline.weight(.semibold))
+                            Text(listener.artist).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(listener.isPlaying ? "正在播放" : "已暂停")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private var searchBar: some View {
