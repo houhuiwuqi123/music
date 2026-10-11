@@ -10,7 +10,7 @@ const view = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'CandyPlazaV
 const plist = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Info.plist'), 'utf8');
 
 function verifySource() {
-    assert.ok(service.includes('URLComponents(string: "wss://webtrc.com/ws")'));
+    assert.ok(service.includes('URLComponents(string: "wss://music.webtrc.eu.cc/ws")'));
     assert.ok(service.includes('URLQueryItem(name: "id", value: clientID)'));
     assert.ok(service.includes('15_000_000_000'));
     assert.ok(service.includes('3_000_000_000'));
@@ -31,7 +31,7 @@ function verifySource() {
 
 function publicAddresses() {
     return new Promise((resolve, reject) => {
-        const request = https.get('https://dns.google/resolve?name=webtrc.com&type=A', response => {
+        const request = https.get('https://dns.google/resolve?name=music.webtrc.eu.cc&type=A', response => {
             let body = '';
             response.setEncoding('utf8');
             response.on('data', chunk => { body += chunk; });
@@ -71,11 +71,11 @@ function verifyPublicSnapshot(address) {
         };
         const request = https.request({
             hostname: address,
-            servername: 'webtrc.com',
+            servername: 'music.webtrc.eu.cc',
             port: 443,
             path: `/ws?id=${crypto.randomUUID()}`,
             headers: {
-                Host: 'webtrc.com',
+                Host: 'music.webtrc.eu.cc',
                 Connection: 'Upgrade',
                 Upgrade: 'websocket',
                 'Sec-WebSocket-Version': '13',

@@ -314,7 +314,7 @@ final class CandyPlazaService: ObservableObject {
 
     private func openSocket() {
         guard hasStarted else { return }
-        var components = URLComponents(string: "wss://webtrc.com/ws")
+        var components = URLComponents(string: "wss://music.webtrc.eu.cc/ws")
         components?.queryItems = [URLQueryItem(name: "id", value: clientID)]
         guard let url = components?.url else {
             errorMessage = "广场服务器地址无效。"

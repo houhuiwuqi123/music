@@ -21,7 +21,7 @@ ws://<host>/ws?id=<clientId>
 ```
 
 - `clientId`：客户端自己生成的 UUID v4，每次启动/刷新都重新生成（不需要持久化）。
-- 生产环境地址：`ws://webtrc.com/ws?id=...`（nginx 反代到 Go 后端 8080 端口）。
+- 生产环境地址：`ws://music.webtrc.eu.cc/ws?id=...`（nginx 反代到 Go 后端 8080 端口）。
 - 连接建立后，服务器立即推送一条当前广场快照（见下）。
 
 ### 2.2 消息包络（JSON，Swift 用 `Codable` 对应即可）
