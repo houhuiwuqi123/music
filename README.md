@@ -46,6 +46,8 @@ The deployment target is iOS 16.0. The Xcode project resolves the WebRTC binary 
 
 When updating a macOS copy, sync the complete project, including both Candy Plaza Swift files and `MusicPlayer.xcodeproj/project.pbxproj`. Both files are already registered in the AURU MUSIC target's Compile Sources phase. If Xcode reports `Cannot find 'CandyPlazaService' in scope`, check the earlier build errors in the service file and confirm these files and the project configuration were copied together.
 
+WebRTC is a binary Swift Package dependency. Both app build configurations set Runpath Search Paths to `$(inherited)` and `@executable_path/Frameworks` so the executable can load the embedded framework at launch. If an older build crashes with `Library not loaded: @rpath/WebRTC.framework/WebRTC` and `no LC_RPATH's found`, sync the project configuration, use Product > Clean Build Folder, then build and install again. Verify the built app contains `Frameworks/WebRTC.framework/WebRTC` and that `otool -l` on the app executable lists an `LC_RPATH` with `@executable_path/Frameworks`. The shared Run scheme also enables `IDEPreferLogStreaming=YES` for Xcode launch diagnostics; this logging setting does not fix a missing framework.
+
 ## How local files are recognized
 
 The app cannot read arbitrary files elsewhere on an iPhone because iOS apps run in a sandbox. Use either supported workflow:
