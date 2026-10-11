@@ -28,17 +28,26 @@ function verifySource() {
     assert.ok(!plist.includes('NSExceptionAllowsInsecureHTTPLoads'));
     assert.ok(service.includes('as? Bool ?? true'));
     assert.ok(service.includes('userDefaults.set(enabled, forKey: "candy_shares_listening")'));
-    assert.ok(service.includes('listening: sharesListening ? localListening : nil'));
+    assert.ok(service.includes('var state = sharesListening ? localListening : nil'));
+    assert.ok(service.includes('state?.file = shares.values.first'));
     assert.ok(service.includes('30_000_000_000'));
     assert.ok(service.includes('case "listeners":'));
     assert.ok(service.includes('.filter { $0.clientId != clientID }'));
     assert.ok(service.includes('if firstSnapshot { sendListening() }'));
     const listeningUpdate = service.slice(service.indexOf('func updateListening('), service.indexOf('private func sendListening('));
-    assert.ok(!listeningUpdate.includes('fileURL') && !listeningUpdate.includes('artworkData'));
+    assert.ok(!listeningUpdate.includes('artworkData'));
     const rootView = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'RootView.swift'), 'utf8');
     assert.ok(rootView.includes('Publishers.CombineLatest(player.$currentTrack, player.$isPlaying)'));
     assert.ok(rootView.includes('plaza.start()'));
-    assert.ok(view.includes('plaza.setSharesListening($0)') && view.includes('ForEach(plaza.listeners)'));
+    assert.ok(view.includes('plaza.setSharesListening($0)') && view.includes('ForEach(visibleListeners)'));
+    assert.ok(!view.includes('CandyPublishPanelView') && !view.includes('showsPublishPanel'));
+    assert.ok(view.includes('listener.region ?? "地区未知"'));
+    assert.ok(view.includes('.id(listener.id)'));
+    assert.ok(view.includes('action: { selectedFile = listener.file }'));
+    assert.ok(service.includes('sharedFiles[file.id] = track.fileURL'));
+    const automaticShare = service.slice(service.indexOf('private func synchronizeAutomaticShare()'), service.indexOf('func download('));
+    assert.ok(automaticShare.includes('shares.removeAll()'));
+    assert.ok(!automaticShare.includes('removeItem') && !automaticShare.includes('copyItem'));
     console.log('PASS: client source/config regression checks (not a Swift build).');
 }
 

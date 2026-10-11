@@ -25,6 +25,8 @@ struct CandyPlazaListening: Codable, Identifiable, Equatable {
     var title: String
     var artist: String
     var isPlaying: Bool
+    var region: String? = nil
+    var file: CandyPlazaFile? = nil
     var id: String { clientId }
 }
 
@@ -122,7 +124,6 @@ final class CandyPlazaService: ObservableObject {
     @Published private(set) var files: [CandyPlazaFile] = []
     @Published private(set) var shares: [String: CandyPlazaFile] = [:]
     @Published private(set) var downloads: [String: CandyPlazaDownload] = [:]
-    @Published private(set) var publishHistory: [CandyPlazaHistory]
     @Published private(set) var receiveHistory: [CandyPlazaHistory]
     @Published private(set) var errorMessage: String?
 
@@ -138,17 +139,17 @@ final class CandyPlazaService: ObservableObject {
     private var connectionTimeoutTask: Task<Void, Never>?
     private var listeningHeartbeatTask: Task<Void, Never>?
     private var localListening: CandyPlazaListening?
+    private var listeningTrack: Track?
+    private var automaticShareTrackID: UUID?
     private var outgoingMessages: [String] = []
     private var outgoingMessageIndex = 0
     private var isSendingMessage = false
     private var hasStarted = false
-    private var shouldRepublishShares = false
     private var clientID = UUID().uuidString.lowercased()
     private var sharedFiles: [String: URL] = [:]
     private var servingPeers: [String: CandyPlazaPeer] = [:]
     private var fetchingPeers: [String: CandyPlazaPeer] = [:]
     private var earlyCandidates: [String: [CandyPlazaSignal.Candidate]] = [:]
-    private let shareFolder: URL
     private let downloadFolder: URL
 
     init() {
@@ -166,9 +167,7 @@ final class CandyPlazaService: ObservableObject {
         peerFactory = RTCPeerConnectionFactory()
 
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        shareFolder = documents.appendingPathComponent("Candy Shares", isDirectory: true)
         downloadFolder = documents.appendingPathComponent("Candy Downloads", isDirectory: true)
-        publishHistory = Self.loadHistory(forKey: "candy_publish_log")
         receiveHistory = Self.loadHistory(forKey: "candy_receive_log")
     }
 
@@ -229,7 +228,7 @@ final class CandyPlazaService: ObservableObject {
     func setSharesListening(_ enabled: Bool) {
         sharesListening = enabled
         userDefaults.set(enabled, forKey: "candy_shares_listening")
-        sendListening()
+        synchronizeAutomaticShare()
     }
 
     func updateListening(track: Track?, isPlaying: Bool) {
@@ -240,19 +239,17 @@ final class CandyPlazaService: ObservableObject {
                 artist: String($0.artist.prefix(300)), isPlaying: isPlaying
             )
         }
-        guard state != localListening else { return }
+        let changed = state != localListening || track?.fileURL != listeningTrack?.fileURL || track?.id != listeningTrack?.id
+        listeningTrack = track
         localListening = state
-        sendListening()
+        if changed { synchronizeAutomaticShare() }
     }
 
     private func sendListening() {
         guard connectionState == .connected, supportsListening else { return }
-        send(CandyPlazaMessage(type: "listening", listening: sharesListening ? localListening : nil))
-    }
-
-    func clearPublishHistory() {
-        publishHistory = []
-        userDefaults.removeObject(forKey: "candy_publish_log")
+        var state = sharesListening ? localListening : nil
+        state?.file = shares.values.first
+        send(CandyPlazaMessage(type: "listening", listening: state))
     }
 
     func clearReceiveHistory() {
@@ -260,50 +257,35 @@ final class CandyPlazaService: ObservableObject {
         userDefaults.removeObject(forKey: "candy_receive_log")
     }
 
-    func publishFiles(_ urls: [URL]) async {
-        var failures: [String] = []
-        do {
-            try FileManager.default.createDirectory(at: shareFolder, withIntermediateDirectories: true)
-            for source in urls {
-                do {
-                    let destination = uniqueURL(for: source.lastPathComponent, in: shareFolder)
-                    try coordinatedCopy(from: source, to: destination)
-                    let values = try destination.resourceValues(forKeys: [.fileSizeKey])
-                    let file = CandyPlazaFile(
-                        id: UUID().uuidString.lowercased(),
-                        name: destination.lastPathComponent,
-                        size: Int64(values.fileSize ?? 0),
-                        ownerName: nickname
-                    )
-                    sharedFiles[file.id] = destination
-                    shares[file.id] = file
-                    append(
-                        CandyPlazaHistory(name: file.name, size: file.size, time: Date()),
-                        to: &publishHistory,
-                        key: "candy_publish_log"
-                    )
-                    send(CandyPlazaMessage(type: "publish", file: file))
-                } catch {
-                    failures.append("\(source.lastPathComponent): \(error.localizedDescription)")
-                }
-            }
-        } catch {
-            failures.append(error.localizedDescription)
+    private func synchronizeAutomaticShare() {
+        let currentURL = sharedFiles.values.first
+        if !sharesListening || listeningTrack == nil ||
+            automaticShareTrackID != listeningTrack?.id || currentURL != listeningTrack?.fileURL {
+            let peers = Array(servingPeers.values)
+            servingPeers.removeAll()
+            peers.forEach { $0.channel?.close(); $0.connection?.close() }
+            shares.removeAll()
+            sharedFiles.removeAll()
+            automaticShareTrackID = nil
         }
-        reportFailures(failures)
-    }
-
-    func unpublish(_ fileID: String) {
-        send(CandyPlazaMessage(type: "unpublish", fileId: fileID))
-        shares.removeValue(forKey: fileID)
-        if let url = sharedFiles.removeValue(forKey: fileID) {
+        if sharesListening, let track = listeningTrack, shares.isEmpty {
             do {
-                try FileManager.default.removeItem(at: url)
+                let attributes = try track.fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                guard attributes.isRegularFile == true, let size = attributes.fileSize else {
+                    throw CocoaError(.fileReadUnsupportedScheme)
+                }
+                let file = CandyPlazaFile(
+                    id: UUID().uuidString.lowercased(), name: track.fileURL.lastPathComponent,
+                    size: Int64(size), ownerName: nickname
+                )
+                shares[file.id] = file
+                sharedFiles[file.id] = track.fileURL
+                automaticShareTrackID = track.id
             } catch {
-                errorMessage = "撤回成功，但本地副本未能删除：\(error.localizedDescription)"
+                errorMessage = "当前歌曲无法自动分享：\(error.localizedDescription)"
             }
         }
-        files.removeAll { $0.id == fileID && $0.ownerId == clientID }
+        sendListening()
     }
 
     func download(_ file: CandyPlazaFile) {
@@ -317,6 +299,10 @@ final class CandyPlazaService: ObservableObject {
         }
         guard connectionState == .connected else {
             errorMessage = "广场连接断开，请连接后重试。"
+            return
+        }
+        guard listeners.contains(where: { $0.clientId == ownerID && $0.file?.id == file.id }) else {
+            errorMessage = "这首歌曲已停止分享，请选择当前正在分享的歌曲。"
             return
         }
         downloads[file.id] = CandyPlazaDownload(file: file, progress: 0, state: .downloading)
@@ -367,10 +353,6 @@ final class CandyPlazaService: ObservableObject {
         errorMessage = nil
     }
 
-    func reportImportError(_ message: String) {
-        errorMessage = message
-    }
-
     private func openSocket() {
         guard hasStarted else { return }
         var components = URLComponents(string: "wss://music.webtrc.eu.cc/ws")
@@ -382,7 +364,6 @@ final class CandyPlazaService: ObservableObject {
         connectionState = .connecting
         supportsListening = false
         listeners = []
-        shouldRepublishShares = true
         outgoingMessages.removeAll()
         outgoingMessageIndex = 0
         isSendingMessage = false
@@ -487,12 +468,6 @@ final class CandyPlazaService: ObservableObject {
             connectionState = .connected
             connectionError = nil
             files = message.files ?? []
-            if shouldRepublishShares {
-                shouldRepublishShares = false
-                for share in shares.values {
-                    send(CandyPlazaMessage(type: "publish", file: share))
-                }
-            }
         case "signal":
             guard let from = message.from, let payload = message.data,
                   let data = payload.data(using: .utf8),
@@ -510,6 +485,10 @@ final class CandyPlazaService: ObservableObject {
         switch signal.kind {
         case "offer":
             guard let offer = signal.sdp else { return }
+            guard sharesListening, !shares.isEmpty else {
+                errorMessage = "已拒绝文件请求：当前没有公开分享的歌曲。"
+                return
+            }
             let peer = makePeer(remoteID: remoteID, isServing: true)
             servingPeers[remoteID]?.connection?.close()
             servingPeers[remoteID] = peer
@@ -744,9 +723,16 @@ final class CandyPlazaService: ObservableObject {
     }
 
     private func sendFile(_ fileID: String, over channel: RTCDataChannel) {
-        guard let url = sharedFiles[fileID],
-              let file = shares[fileID],
-              let handle = try? FileHandle(forReadingFrom: url) else {
+        guard sharesListening, let url = sharedFiles[fileID], let file = shares[fileID] else {
+            errorMessage = "这首歌曲已撤回分享，无法发送。"
+            channel.close()
+            return
+        }
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forReadingFrom: url)
+        } catch {
+            errorMessage = "无法读取分享的歌曲：\(error.localizedDescription)"
             channel.close()
             return
         }
@@ -764,8 +750,12 @@ final class CandyPlazaService: ObservableObject {
             }
             do {
                 while true {
+                    guard self.sharesListening, self.shares[fileID] != nil,
+                          channel.readyState == .open else { return }
                     if channel.bufferedAmount > 1_048_576 {
                         while channel.bufferedAmount > 524_288 {
+                            guard self.sharesListening, self.shares[fileID] != nil,
+                                  channel.readyState == .open else { return }
                             try await Task.sleep(nanoseconds: 25_000_000)
                         }
                     }
@@ -776,7 +766,20 @@ final class CandyPlazaService: ObservableObject {
                     }
                 }
                 if let eof = try? JSONSerialization.data(withJSONObject: ["type": "eof"]) {
-                    _ = channel.sendData(RTCDataBuffer(data: eof, isBinary: false))
+                    guard channel.sendData(RTCDataBuffer(data: eof, isBinary: false)) else {
+                        self.errorMessage = "无法发送歌曲传输结束标记。"
+                        return
+                    }
+                    let deadline = Date().addingTimeInterval(30)
+                    while channel.bufferedAmount > 0 {
+                        guard self.sharesListening, self.shares[fileID] != nil,
+                              channel.readyState == .open else { return }
+                        guard Date() < deadline else {
+                            self.errorMessage = "歌曲发送缓冲未能及时完成，请重新接收。"
+                            return
+                        }
+                        try await Task.sleep(nanoseconds: 25_000_000)
+                    }
                 }
             } catch {
                 self.errorMessage = error.localizedDescription
@@ -849,11 +852,6 @@ final class CandyPlazaService: ObservableObject {
         }
     }
 
-    private func reportFailures(_ failures: [String]) {
-        guard !failures.isEmpty else { return }
-        errorMessage = failures.prefix(5).joined(separator: "\n")
-    }
-
     private func uniqueURL(for name: String, in folder: URL) -> URL {
         let source = URL(fileURLWithPath: name)
         let base = source.deletingPathExtension().lastPathComponent
@@ -868,23 +866,6 @@ final class CandyPlazaService: ObservableObject {
             suffix += 1
         }
         return candidate
-    }
-
-    private func coordinatedCopy(from source: URL, to destination: URL) throws {
-        let hasAccess = source.startAccessingSecurityScopedResource()
-        defer { if hasAccess { source.stopAccessingSecurityScopedResource() } }
-        let coordinator = NSFileCoordinator()
-        var coordinationError: NSError?
-        var copyError: Error?
-        coordinator.coordinate(readingItemAt: source, options: [], error: &coordinationError) { readableURL in
-            do {
-                try FileManager.default.copyItem(at: readableURL, to: destination)
-            } catch {
-                copyError = error
-            }
-        }
-        if let coordinationError { throw coordinationError }
-        if let copyError { throw copyError }
     }
 
     private static func loadHistory(forKey key: String) -> [CandyPlazaHistory] {

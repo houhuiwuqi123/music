@@ -1,19 +1,17 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct CandyPlazaView: View {
     @EnvironmentObject private var plaza: CandyPlazaService
     @EnvironmentObject private var settings: AppSettings
     @State private var query = ""
-    @State private var showsPublishPanel = false
     @State private var selectedFile: CandyPlazaFile?
 
-    private var visibleFiles: [CandyPlazaFile] {
-        let ownIDs = Set(plaza.shares.keys)
+    private var visibleListeners: [CandyPlazaListening] {
         let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return plaza.files.filter { file in
-            !ownIDs.contains(file.id)
-                && file.name.localizedCaseInsensitiveContains(search)
+        return plaza.listeners.filter { listener in
+            search.isEmpty || listener.title.localizedCaseInsensitiveContains(search)
+                || listener.artist.localizedCaseInsensitiveContains(search)
+                || listener.ownerName.localizedCaseInsensitiveContains(search)
         }
     }
 
@@ -43,11 +41,6 @@ struct CandyPlazaView: View {
         }
         .scrollIndicators(.hidden)
         .task { plaza.start() }
-        .sheet(isPresented: $showsPublishPanel) {
-            CandyPublishPanelView()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
         .confirmationDialog(
             "接收文件",
             isPresented: Binding(
@@ -98,55 +91,25 @@ struct CandyPlazaView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(.ultraThinMaterial, in: Capsule())
-            Button { showsPublishPanel = true } label: {
-                Label("发布", systemImage: "plus")
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 9)
-                    .background(
-                        LinearGradient(colors: [.pink, .purple], startPoint: .leading, endPoint: .trailing),
-                        in: Capsule()
-                    )
-            }
-            .buttonStyle(.plain)
         }
     }
 
     private var listeningSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle("公开正在听", isOn: Binding(
+            Toggle("公开正在听并分享歌曲", isOn: Binding(
                 get: { plaza.sharesListening },
                 set: { plaza.setSharesListening($0) }
             ))
             .tint(.purple)
-            Text("默认公开歌曲名、艺人与播放状态，不分享音频文件。关闭后停止公开。")
+            Text("开启后，其他在线用户可查看并下载当前歌曲。暂停仍保留分享，切歌会撤回上一首。只分享你有权分享的音乐；关闭后停止公开和传输。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("大家正在听").font(.headline)
             if plaza.connectionState != .connected {
                 Text("连接广场后查看其他用户正在听的歌曲")
                     .font(.caption).foregroundStyle(.secondary)
             } else if !plaza.supportsListening {
                 Text("服务器尚未启用听歌状态，请更新信令后端。")
                     .font(.caption).foregroundStyle(.orange)
-            } else if plaza.listeners.isEmpty {
-                Text("暂时没有其他用户公开正在听的歌曲")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                ForEach(plaza.listeners) { listener in
-                    HStack(spacing: 12) {
-                        Image(systemName: listener.isPlaying ? "waveform" : "pause.fill")
-                            .foregroundStyle(.purple)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(listener.ownerName).font(.caption.weight(.semibold))
-                            Text(listener.title).font(.subheadline.weight(.semibold))
-                            Text(listener.artist).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text(listener.isPlaying ? "正在播放" : "已暂停")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
             }
         }
         .padding(14)
@@ -156,7 +119,7 @@ struct CandyPlazaView: View {
     private var searchBar: some View {
         HStack(spacing: 9) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("搜索文件名…", text: $query)
+            TextField("搜索歌曲、艺人或用户…", text: $query)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             if !query.isEmpty {
@@ -182,23 +145,23 @@ struct CandyPlazaView: View {
                 )
                 .overlay { CandyAmbientStars() }
 
-                if visibleFiles.isEmpty {
+                if visibleListeners.isEmpty {
                     let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
-                    Text(search.isEmpty ? "夜空中还没有人分享文件…" : "没有找到包含「\(search)」的文件")
+                    Text(search.isEmpty ? "夜空中还没有其他用户公开听歌…" : "没有找到包含「\(search)」的歌曲或用户")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.white.opacity(0.62))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 28)
                 } else {
-                    ForEach(visibleFiles) { file in
-                        let point = Self.position(for: file.id, size: geometry.size)
+                    ForEach(visibleListeners) { listener in
+                        let point = Self.position(for: listener.id, size: geometry.size)
                         CandyFileStar(
-                            file: file,
-                            download: plaza.downloads[file.id],
-                            action: { selectedFile = file }
+                            listener: listener,
+                            download: listener.file.flatMap { plaza.downloads[$0.id] },
+                            action: { selectedFile = listener.file }
                         )
                         .position(point)
-                        .id(file.id)
+                        .id(listener.id)
                     }
                 }
             }
@@ -279,16 +242,16 @@ struct CandyPlazaView: View {
 }
 
 private struct CandyFileStar: View {
-    let file: CandyPlazaFile
+    let listener: CandyPlazaListening
     let download: CandyPlazaDownload?
     let action: () -> Void
     @State private var pulsing = false
     @State private var drifting = false
     @State private var successGlow = false
 
-    private var hash: UInt32 { CandyPlazaView.stableHash(file.id) }
+    private var hash: UInt32 { CandyPlazaView.stableHash(listener.id) }
     private var starSize: CGFloat {
-        let logarithm = log10(Double(max(file.size, 1_024)))
+        let logarithm = log10(Double(max(listener.file?.size ?? 0, 1_024)))
         let fraction = min(1, max(0, (logarithm - 3) / 6))
         return CGFloat(16 + fraction * 18)
     }
@@ -321,15 +284,26 @@ private struct CandyFileStar: View {
                 }
                 .frame(width: 54, height: 42)
                 VStack(spacing: 1) {
-                    Text(file.ownerName)
+                    Text(listener.ownerName)
                         .font(.system(size: 13, weight: .heavy))
                         .foregroundStyle(Color(red: 1, green: 0.82, blue: 0.42))
                         .lineLimit(1)
-                    Text(file.name)
+                    Text(listener.title)
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(.white.opacity(0.92))
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
+                    Text(listener.artist)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .lineLimit(1)
+                    Text(listener.region ?? "地区未知")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.65))
+                        .lineLimit(1)
+                    Text(listener.file == nil ? "暂不可下载" : (listener.isPlaying ? "正在播放 · 点击接收" : "已暂停 · 点击接收"))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white.opacity(0.7))
                 }
                 .frame(width: 132)
             }
@@ -339,7 +313,7 @@ private struct CandyFileStar: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isDownloading)
+        .disabled(isDownloading || listener.file == nil)
         .onAppear {
             if download?.state.isComplete == true { showSuccessGlow() }
             withAnimation(.easeInOut(duration: 1.4 + Double(hash % 13) / 10).repeatForever(autoreverses: true).delay(Double((hash >> 3) % 18) / 10)) {
@@ -352,6 +326,7 @@ private struct CandyFileStar: View {
         .onChange(of: download?.state.isComplete) { completed in
             if completed == true { showSuccessGlow() }
         }
+        .onChange(of: listener.file?.id) { _ in successGlow = false }
         .onChange(of: isDownloading) { downloading in
             withAnimation(
                 .easeInOut(duration: downloading ? 0.48 : 1.4 + Double(hash % 13) / 10)
@@ -395,95 +370,5 @@ private struct CandyAmbientStars: View {
             }
         }
         .allowsHitTesting(false)
-    }
-}
-
-private struct CandyPublishPanelView: View {
-    @EnvironmentObject private var plaza: CandyPlazaService
-    @EnvironmentObject private var settings: AppSettings
-    @Environment(\.dismiss) private var dismiss
-    @State private var showsFileImporter = false
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Button { showsFileImporter = true } label: {
-                        Label("选择文件发布", systemImage: "doc.badge.plus")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 8)
-                    }
-                } footer: {
-                    Text("文件会复制到本机的 Candy Shares 文件夹；只有你在线时，其他用户才能接收。")
-                }
-
-                Section("我的分享") {
-                    if plaza.shares.isEmpty {
-                        Text("还没有发布任何文件").foregroundStyle(.secondary)
-                    } else {
-                        ForEach(plaza.shares.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { file in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(file.name).lineLimit(1)
-                                    Text(CandyPlazaView.formatSize(file.size))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button("撤回", role: .destructive) { plaza.unpublish(file.id) }
-                                    .font(.caption.weight(.semibold))
-                            }
-                        }
-                    }
-                }
-
-                Section {
-                    if plaza.publishHistory.isEmpty {
-                        Text("还没有发布记录").foregroundStyle(.secondary)
-                    } else {
-                        ForEach(plaza.publishHistory) { entry in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(entry.name).lineLimit(1)
-                                Text("\(CandyPlazaView.formatSize(entry.size)) · \(entry.time.formatted(date: .abbreviated, time: .shortened))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } header: {
-                    HStack {
-                        Text("发布记录")
-                        Spacer()
-                        if !plaza.publishHistory.isEmpty {
-                            Button("清除记录") { plaza.clearPublishHistory() }
-                                .font(.caption)
-                        }
-                    }
-                }
-            }
-            .navigationTitle("发布文件")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(settings.text("done")) { dismiss() }
-                }
-            }
-        }
-        .fileImporter(
-            isPresented: $showsFileImporter,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: true
-        ) { result in
-            switch result {
-            case .success(let urls):
-                Task { await plaza.publishFiles(urls) }
-            case .failure(let error):
-                // The picker cancellation is also returned as a failure.
-                if (error as NSError).code != NSUserCancelledError {
-                    plaza.reportImportError(error.localizedDescription)
-                }
-            }
-        }
     }
 }
