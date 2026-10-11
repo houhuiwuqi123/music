@@ -3,8 +3,7 @@ const { randomUUID } = require('node:crypto');
 
 const base = process.argv[2] || 'ws://127.0.0.1:18081/ws';
 const clients = [];
-async function connect() {
-    const id = randomUUID();
+async function connect(id = randomUUID()) {
     const url = new URL(base);
     url.searchParams.set('id', id);
     const socket = new WebSocket(url);
@@ -33,7 +32,8 @@ async function main() {
     const a = await connect();
     const b = await connect();
     const song = { id: randomUUID(), name: 'song.mp3', size: 1024, ownerId: 'spoofed', ownerName: 'spoofed' };
-    const state = { clientId: 'spoofed', region: 'spoofed', ownerName: 'Test visitor', title: 'Test song', artist: 'Test artist', isPlaying: true, file: song };
+    const avatar = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6WQAAAAASUVORK5CYII=';
+    const state = { clientId: 'spoofed', region: 'spoofed', ownerName: 'Test visitor', title: 'Test song', artist: 'Test artist', isPlaying: true, file: song, avatar };
     a.send({ type: 'listening', listening: state });
     let snapshot = await b.wait(m => m.type === 'listeners' && m.listeners.some(s => s.clientId === a.id));
     assert.equal(snapshot.listeners.find(s => s.clientId === a.id).title, state.title);
@@ -44,6 +44,8 @@ async function main() {
     assert.equal(listener.file.ownerId, a.id);
     assert.equal(listener.file.ownerName, state.ownerName);
     assert.equal(listener.file.id, song.id);
+    assert.equal(listener.avatar, avatar);
+    assert.ok(!listener.offlineAt);
     assert.ok(!JSON.stringify(listener).includes('"ip":'));
     await b.wait(m => m.type === 'plaza' && m.files?.some(f => f.id === song.id));
     const rejectedStart = b.messages.length;
@@ -71,25 +73,32 @@ async function main() {
     console.log('PASS: privacy off / stopped playback removes state');
     a.send({ type: 'listening', listening: { ...state, title: '' } });
     await a.wait(m => m.type === 'error' && m.error);
+    const avatarStart = a.messages.length;
+    a.send({ type: 'listening', listening: { ...state, avatar: 'not-an-image' } });
+    await a.wait(m => m.type === 'error' && m.error.includes('avatar'), avatarStart);
     console.log('PASS: invalid metadata rejected explicitly');
     start = b.messages.length;
     a.send({ type: 'listening', listening: state });
     await b.wait(m => m.type === 'listeners' && m.listeners.some(s => s.clientId === a.id), start);
     start = b.messages.length;
     a.socket.close();
-    await b.wait(m => m.type === 'listeners' && !m.listeners.some(s => s.clientId === a.id), start);
+    await b.wait(m => m.type === 'listeners' && m.listeners.some(s => s.clientId === a.id && s.offlineAt), start);
     await b.wait(m => m.type === 'plaza' && !(m.files || []).some(f => f.id === song.id), start);
-    const reconnected = await connect();
+    const reconnected = await connect(a.id);
     start = b.messages.length;
     reconnected.send({ type: 'listening', listening: state });
-    await b.wait(m => m.type === 'listeners' && m.listeners.some(s => s.clientId === reconnected.id), start);
+    await b.wait(m => m.type === 'listeners' && m.listeners.some(s => s.clientId === reconnected.id && !s.offlineAt), start);
     await b.wait(m => m.type === 'plaza' && m.files?.some(f => f.id === song.id && f.ownerId === reconnected.id), start);
-    console.log('PASS: disconnect cleanup and republish with new identity');
+    console.log('PASS: offline snapshot and reconnect with same star identity');
     const file = { id: randomUUID(), name: 'test.txt', size: 4, ownerName: 'Test visitor' };
     b.send({ type: 'publish', file });
     await c.wait(m => m.type === 'plaza' && m.files?.some(f => f.id === file.id));
     b.send({ type: 'signal', to: c.id, data: JSON.stringify({ kind: 'candidate', candidate: {} }) });
     await c.wait(m => m.type === 'signal' && m.from === b.id);
+    const streamStart = c.messages.length;
+    b.send({ type: 'signal', to: c.id, data: JSON.stringify({ kind: 'offer', sdp: { type: 'offer', sdp: 'preview-channel-test' } }) });
+    const signal = await c.wait(m => m.type === 'signal' && JSON.parse(m.data).kind === 'offer', streamStart);
+    assert.equal(JSON.parse(signal.data).sdp.sdp, 'preview-channel-test');
     start = c.messages.length;
     b.send({ type: 'unpublish', fileId: file.id });
     await c.wait(m => m.type === 'plaza' && !(m.files || []).some(f => f.id === file.id), start);

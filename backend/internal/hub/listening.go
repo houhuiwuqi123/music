@@ -1,8 +1,13 @@
 package hub
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"reflect"
 	"sort"
 	"strings"
@@ -14,6 +19,7 @@ import (
 )
 
 const ListeningTTL = 90 * time.Second
+const OfflineRetention = 60 * time.Second
 
 type listeningEntry struct {
 	state   model.Listening
@@ -81,6 +87,17 @@ func (h *Hub) UpdateListening(client *Client, state *model.Listening, now time.T
 	}
 	value := *state
 	value.ClientID = client.ID
+	value.OfflineAt = nil
+	if value.Avatar != "" {
+		data, err := base64.StdEncoding.DecodeString(value.Avatar)
+		if err != nil || len(data) > 32768 {
+			return fmt.Errorf("invalid avatar size or encoding")
+		}
+		config, _, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil || config.Width > 256 || config.Height > 256 || config.Width < 1 || config.Height < 1 {
+			return fmt.Errorf("invalid avatar image")
+		}
+	}
 	value.Region = client.Region
 	if value.Region == "" {
 		value.Region = "地区未知"
@@ -131,14 +148,47 @@ func (h *Hub) ExpireListening(now time.Time) {
 	defer h.listeningMu.Unlock()
 	changed := false
 	for id, entry := range h.listening {
-		if now.Sub(entry.updated) >= ListeningTTL {
-			h.removeListeningFileLocked(entry.state)
+		if entry.state.OfflineAt != nil {
+			if now.Unix()-*entry.state.OfflineAt < 60 {
+				continue
+			}
 			delete(h.listening, id)
 			changed = true
+		} else if now.Sub(entry.updated) >= ListeningTTL {
+			h.removeListeningFileLocked(entry.state)
+			timestamp := now.Unix()
+			entry.state.OfflineAt = &timestamp
+			h.listening[id] = entry
+			changed = true
 		}
+
 	}
 	if changed {
 		h.broadcastListeningLocked()
 		h.Broadcast(h.Snapshot())
 	}
+}
+
+func (h *Hub) DisconnectListening(client *Client, now time.Time) {
+	h.listeningMu.Lock()
+	defer h.listeningMu.Unlock()
+	h.mu.Lock()
+	if h.clients[client.ID] != client {
+		h.mu.Unlock()
+		return
+	}
+	delete(h.clients, client.ID)
+	for id, file := range h.files {
+		if file.OwnerID == client.ID {
+			delete(h.files, id)
+		}
+	}
+	h.mu.Unlock()
+	if entry, exists := h.listening[client.ID]; exists {
+		timestamp := now.Unix()
+		entry.state.OfflineAt = &timestamp
+		h.listening[client.ID] = entry
+	}
+	h.broadcastListeningLocked()
+	h.Broadcast(h.Snapshot())
 }

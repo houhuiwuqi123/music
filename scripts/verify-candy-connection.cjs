@@ -24,7 +24,7 @@ function verifySource() {
     assert.ok(service.includes('guard self.servingPeers[remoteID] === peer'));
     assert.ok(service.includes('guard self.fetchingPeers[remoteID] === peer'));
     assert.match(service, /func retryConnection\(\) \{\s+stop\(\)\s+start\(\)/);
-    assert.ok(view.includes('plaza.connectionError') && view.includes('plaza.retryConnection()'));
+    assert.ok(!view.includes('plaza.connectionError') && !view.includes('connectionTimeout'));
     assert.ok(!plist.includes('NSExceptionAllowsInsecureHTTPLoads'));
     assert.ok(service.includes('as? Bool ?? true'));
     assert.ok(service.includes('userDefaults.set(enabled, forKey: "candy_shares_listening")'));
@@ -39,7 +39,8 @@ function verifySource() {
     const rootView = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'RootView.swift'), 'utf8');
     assert.ok(rootView.includes('Publishers.CombineLatest(player.$currentTrack, player.$isPlaying)'));
     assert.ok(rootView.includes('plaza.start()'));
-    assert.ok(view.includes('plaza.setSharesListening($0)') && view.includes('ForEach(visibleListeners)'));
+    const settingsView = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'SettingsView.swift'), 'utf8');
+    assert.ok(settingsView.includes('plaza.setSharesListening($0)') && view.includes('ForEach(visibleListeners)'));
     assert.ok(!view.includes('CandyPublishPanelView') && !view.includes('showsPublishPanel'));
     assert.ok(view.includes('listener.region ?? "地区未知"'));
     assert.ok(view.includes('.id(listener.id)'));
@@ -48,6 +49,13 @@ function verifySource() {
     const automaticShare = service.slice(service.indexOf('private func synchronizeAutomaticShare()'), service.indexOf('func download('));
     assert.ok(automaticShare.includes('shares.removeAll()'));
     assert.ok(!automaticShare.includes('removeItem') && !automaticShare.includes('copyItem'));
+    assert.ok(view.includes('paused: listener.isOffline'));
+    assert.ok(view.includes('CandyAstronautScene') && view.includes('CandyProfileView'));
+    assert.ok(view.includes('Button("试听")') && view.includes('Button("下载")'));
+    assert.ok(view.includes('.truncationMode(.tail)'));
+    assert.ok(service.includes('AVAudioConverter') && service.includes('AVAudioPlayerNode'));
+    assert.ok(service.includes('queuedFrames + frames <= 24000 * 3'));
+    assert.ok(service.includes('now - $0 >= 60'));
     console.log('PASS: client source/config regression checks (not a Swift build).');
 }
 

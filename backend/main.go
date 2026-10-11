@@ -37,7 +37,7 @@ func main() {
 	h := hub.New()
 	s := g.Server()
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for now := range ticker.C {
 			h.ExpireListening(now)
@@ -71,11 +71,7 @@ func main() {
 		}
 
 		defer func() {
-			if err := h.UpdateListening(client, nil, time.Now()); err != nil {
-				g.Log().Warning(r.Context(), "listening cleanup failed:", err)
-			}
-			files := h.Unregister(clientID)
-			h.Broadcast(files)
+			h.DisconnectListening(client, time.Now())
 		}()
 
 		for {

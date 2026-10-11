@@ -1,6 +1,8 @@
 import Combine
 import Foundation
 import WebRTC
+import AVFoundation
+import UIKit
 
 struct CandyPlazaFile: Codable, Identifiable, Hashable {
     var id: String
@@ -27,6 +29,9 @@ struct CandyPlazaListening: Codable, Identifiable, Equatable {
     var isPlaying: Bool
     var region: String? = nil
     var file: CandyPlazaFile? = nil
+    var avatar: String? = nil
+    var offlineAt: Int64? = nil
+    var isOffline: Bool { offlineAt != nil }
     var id: String { clientId }
 }
 
@@ -109,7 +114,7 @@ final class CandyPlazaService: ObservableObject {
 
         var title: String {
             switch self {
-            case .connecting: return "连接中"
+            case .connecting: return "连线中"
             case .connected: return "在线"
             case .disconnected: return "离线"
             }
@@ -127,7 +132,12 @@ final class CandyPlazaService: ObservableObject {
     @Published private(set) var receiveHistory: [CandyPlazaHistory]
     @Published private(set) var errorMessage: String?
 
-    let nickname: String
+    @Published private(set) var nickname: String
+    @Published private(set) var avatar: String?
+    @Published private(set) var previewFileID: String?
+    private var previewAudio: CandyPreviewAudio?
+    private var previewTimeout: Task<Void, Never>?
+    private var offlineCleanupTask: Task<Void, Never>?
 
     private let userDefaults = UserDefaults.standard
     private let encoder = JSONEncoder()
@@ -145,7 +155,7 @@ final class CandyPlazaService: ObservableObject {
     private var outgoingMessageIndex = 0
     private var isSendingMessage = false
     private var hasStarted = false
-    private var clientID = UUID().uuidString.lowercased()
+    private let clientID: String
     private var sharedFiles: [String: URL] = [:]
     private var servingPeers: [String: CandyPlazaPeer] = [:]
     private var fetchingPeers: [String: CandyPlazaPeer] = [:]
@@ -154,10 +164,14 @@ final class CandyPlazaService: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
+        let storedClientID = defaults.string(forKey: "candy_client_id") ?? UUID().uuidString.lowercased()
+        clientID = storedClientID
+        defaults.set(storedClientID, forKey: "candy_client_id")
         let storedNickname = defaults.string(forKey: "candy_nickname")
-        let generatedNickname = "访客\(Int.random(in: 1000...9999))"
+        let generatedNickname = "游客\(Int.random(in: 1000...9999))"
         let nickname = storedNickname ?? generatedNickname
         self.nickname = nickname
+        avatar = defaults.string(forKey: "candy_avatar")
         sharesListening = defaults.object(forKey: "candy_shares_listening") as? Bool ?? true
         if storedNickname == nil {
             defaults.set(nickname, forKey: "candy_nickname")
@@ -174,8 +188,17 @@ final class CandyPlazaService: ObservableObject {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
-        clientID = UUID().uuidString.lowercased()
         openSocket()
+        offlineCleanupTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
+                guard let self else { return }
+                let now = Int64(Date().timeIntervalSince1970)
+                self.listeners.removeAll { listener in
+                    listener.offlineAt.map { now - $0 >= 60 } ?? false
+                }
+            }
+        }
         listeningHeartbeatTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 do {
@@ -191,6 +214,9 @@ final class CandyPlazaService: ObservableObject {
 
     func stop() {
         hasStarted = false
+        stopPreview()
+        offlineCleanupTask?.cancel()
+        offlineCleanupTask = nil
         listeningHeartbeatTask?.cancel()
         listeningHeartbeatTask = nil
         listeners = []
@@ -231,7 +257,35 @@ final class CandyPlazaService: ObservableObject {
         synchronizeAutomaticShare()
     }
 
+    func updateProfile(name: String, image: UIImage?, removeAvatar: Bool) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 40 else {
+            errorMessage = "昵称需为 1 至 40 个字符。"
+            return false
+        }
+        if let image {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 96), format: format)
+            let thumbnail = renderer.image { _ in image.draw(in: CGRect(x: 0, y: 0, width: 96, height: 96)) }
+            guard let data = thumbnail.jpegData(compressionQuality: 0.65), data.count <= 32768 else {
+                errorMessage = "头像无法压缩到支持的大小。"
+                return false
+            }
+            avatar = data.base64EncodedString()
+        } else if removeAvatar { avatar = nil }
+        nickname = trimmed
+        userDefaults.set(nickname, forKey: "candy_nickname")
+        userDefaults.set(avatar, forKey: "candy_avatar")
+        localListening?.ownerName = nickname
+        localListening?.avatar = avatar
+        for id in Array(shares.keys) { shares[id]?.ownerName = nickname }
+        sendListening()
+        return true
+    }
+
     func updateListening(track: Track?, isPlaying: Bool) {
+        if isPlaying { stopPreview() }
         let state = track.map {
             CandyPlazaListening(
                 clientId: "", ownerName: nickname,
@@ -248,6 +302,8 @@ final class CandyPlazaService: ObservableObject {
     private func sendListening() {
         guard connectionState == .connected, supportsListening else { return }
         var state = sharesListening ? localListening : nil
+        state?.avatar = avatar
+        state?.ownerName = nickname
         state?.file = shares.values.first
         send(CandyPlazaMessage(type: "listening", listening: state))
     }
@@ -289,6 +345,29 @@ final class CandyPlazaService: ObservableObject {
     }
 
     func download(_ file: CandyPlazaFile) {
+        requestFile(file, preview: false)
+    }
+
+    func preview(_ file: CandyPlazaFile) {
+        stopPreview()
+        requestFile(file, preview: true)
+    }
+
+    func stopPreview() {
+        previewTimeout?.cancel()
+        previewTimeout = nil
+        previewAudio?.stop()
+        previewAudio = nil
+        previewFileID = nil
+        let peers = fetchingPeers.values.filter { $0.isPreview }
+        for peer in peers {
+            fetchingPeers.removeValue(forKey: peer.remoteID)
+            peer.channel?.close()
+            peer.connection?.close()
+        }
+    }
+
+    private func requestFile(_ file: CandyPlazaFile, preview: Bool) {
         guard let ownerID = file.ownerId else {
             errorMessage = "该文件当前无法识别发布者，请刷新广场后重试。"
             return
@@ -301,41 +380,51 @@ final class CandyPlazaService: ObservableObject {
             errorMessage = "广场连接断开，请连接后重试。"
             return
         }
-        guard listeners.contains(where: { $0.clientId == ownerID && $0.file?.id == file.id }) else {
+        guard listeners.contains(where: { !$0.isOffline && $0.clientId == ownerID && $0.file?.id == file.id }) else {
             errorMessage = "这首歌曲已停止分享，请选择当前正在分享的歌曲。"
             return
         }
-        downloads[file.id] = CandyPlazaDownload(file: file, progress: 0, state: .downloading)
+        if preview {
+            previewFileID = file.id
+            previewTimeout = Task { @MainActor [weak self] in
+                do { try await Task.sleep(nanoseconds: 20_000_000_000) } catch { return }
+                guard let self, self.previewFileID == file.id else { return }
+                self.errorMessage = "试听连接超时，请稍后重试。"
+                self.stopPreview()
+            }
+        } else {
+            downloads[file.id] = CandyPlazaDownload(file: file, progress: 0, state: .downloading)
+        }
 
         let peer = makePeer(remoteID: ownerID, isServing: false)
+        peer.isPreview = preview
         peer.fileID = file.id
         guard let connection = peer.connection,
-              let channel = connection.dataChannel(forLabel: "file:\(file.id)", configuration: RTCDataChannelConfiguration()) else {
+              let channel = connection.dataChannel(forLabel: "\(preview ? "preview" : "file"):\(file.id)", configuration: RTCDataChannelConfiguration()) else {
             peer.connection?.close()
-            failDownload(file.id, message: "无法创建文件连接。")
+            if preview { stopPreview(); errorMessage = "无法创建试听连接。" }
+            else { failDownload(file.id, message: "无法创建文件连接。") }
             return
         }
         peer.channel = channel
         channel.delegate = peer
         fetchingPeers[ownerID] = peer
         peer.onData = { [weak self, weak peer] buffer in
-            Task { @MainActor in
-                guard let self, let peer else { return }
-                self.receive(buffer, for: peer)
-            }
+            guard let self, let peer else { return }
+            self.receive(buffer, for: peer)
         }
 
         connection.offer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { [weak self, weak peer] description, error in
             Task { @MainActor in
                 guard let self, let peer, let description else {
-                    self?.failDownload(file.id, message: error?.localizedDescription ?? "无法创建文件连接。")
+                    peer?.onFailure?(error?.localizedDescription ?? "无法创建文件连接。")
                     return
                 }
                 peer.connection?.setLocalDescription(description) { [weak self] error in
                     Task { @MainActor in
                         guard let self else { return }
                         if let error {
-                            self.failDownload(file.id, message: error.localizedDescription)
+                            peer.onFailure?(error.localizedDescription)
                             return
                         }
                         let signal = CandyPlazaSignal(
@@ -363,7 +452,7 @@ final class CandyPlazaService: ObservableObject {
         }
         connectionState = .connecting
         supportsListening = false
-        listeners = []
+        markListenersOffline()
         outgoingMessages.removeAll()
         outgoingMessageIndex = 0
         isSendingMessage = false
@@ -418,7 +507,8 @@ final class CandyPlazaService: ObservableObject {
         outgoingMessageIndex = 0
         isSendingMessage = false
         connectionState = .disconnected
-        listeners = []
+        markListenersOffline()
+        stopPreview()
         supportsListening = false
         connectionError = message
         files = []
@@ -446,7 +536,6 @@ final class CandyPlazaService: ObservableObject {
             }
             guard let self, self.hasStarted else { return }
             self.reconnectTask = nil
-            self.clientID = UUID().uuidString.lowercased()
             self.openSocket()
         }
     }
@@ -475,9 +564,19 @@ final class CandyPlazaService: ObservableObject {
                 errorMessage = "收到无法识别的连接信令。"
                 return
             }
+
             handleSignal(from: from, signal: signal)
         default:
             break
+        }
+    }
+
+    private func markListenersOffline() {
+        let now = Int64(Date().timeIntervalSince1970)
+        listeners = listeners.map { listener in
+            var value = listener
+            if value.offlineAt == nil { value.offlineAt = now }
+            return value
         }
     }
 
@@ -566,9 +665,10 @@ final class CandyPlazaService: ObservableObject {
             delegate: peer
         )
         peer.connection = connection
-        peer.onCandidate = { [weak self] candidate in
+        peer.onCandidate = { [weak self, weak peer] candidate in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, let peer,
+                      self.servingPeers[remoteID] === peer || self.fetchingPeers[remoteID] === peer else { return }
                 self.sendSignal(
                     to: remoteID,
                     signal: CandyPlazaSignal(
@@ -586,12 +686,11 @@ final class CandyPlazaService: ObservableObject {
             Task { @MainActor in
                 guard let self, let peer else { return }
                 peer.channel = channel
+                peer.isPreview = channel.label.hasPrefix("preview:")
                 channel.delegate = peer
                 peer.onData = { [weak self, weak peer] buffer in
-                    Task { @MainActor in
-                        guard let self, let peer else { return }
-                        self.receive(buffer, for: peer)
-                    }
+                    guard let self, let peer else { return }
+                    self.receive(buffer, for: peer)
                 }
                 if channel.readyState == .open,
                    let fileID = channel.label.split(separator: ":").last.map(String.init) {
@@ -603,13 +702,18 @@ final class CandyPlazaService: ObservableObject {
         peer.onChannelOpen = { [weak self, weak peer] fileID, channel in
             Task { @MainActor in
                 guard let self, let peer, peer.isServing else { return }
-                self.sendFile(fileID, over: channel)
+                if peer.isPreview { self.sendPreview(fileID, over: channel) }
+                else { self.sendFile(fileID, over: channel) }
             }
         }
         peer.onFailure = { [weak self, weak peer] message in
             Task { @MainActor in
-                guard let self else { return }
-                if let fileID = peer?.fileID {
+                guard let self, let peer,
+                      self.servingPeers[remoteID] === peer || self.fetchingPeers[remoteID] === peer else { return }
+                if peer.isPreview {
+                    self.errorMessage = message
+                    self.stopPreview()
+                } else if let fileID = peer.fileID {
                     self.failDownload(fileID, message: message)
                 } else {
                     self.errorMessage = message
@@ -624,6 +728,15 @@ final class CandyPlazaService: ObservableObject {
                     self.servingPeers.removeValue(forKey: remoteID)
                 } else {
                     guard self.fetchingPeers[remoteID] === peer else { return }
+                    if peer.isPreview {
+                        if !peer.previewEnded {
+                            self.errorMessage = "试听连接已关闭。"
+                            self.stopPreview()
+                        } else {
+                            self.fetchingPeers.removeValue(forKey: remoteID)
+                        }
+                        return
+                    }
                     self.fetchingPeers.removeValue(forKey: remoteID)
                     if let fileID = peer.fileID,
                            let download = self.downloads[fileID],
@@ -637,6 +750,8 @@ final class CandyPlazaService: ObservableObject {
     }
 
     private func receive(_ buffer: RTCDataBuffer, for peer: CandyPlazaPeer) {
+        guard fetchingPeers[peer.remoteID] === peer else { return }
+        if peer.isPreview { receivePreview(buffer, peer: peer); return }
         guard let fileID = peer.fileID, var download = downloads[fileID] else { return }
         guard case .downloading = download.state else { return }
         if !buffer.isBinary {
@@ -720,6 +835,112 @@ final class CandyPlazaService: ObservableObject {
             fetchingPeers.removeValue(forKey: peer.remoteID)
         }
         errorMessage = message
+    }
+
+    private func sendPreview(_ fileID: String, over channel: RTCDataChannel) {
+        Task { @MainActor in
+            defer { channel.close() }
+            do {
+                guard self.sharesListening, let url = self.sharedFiles[fileID],
+                      let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false) else {
+                    throw CocoaError(.fileReadNoSuchFile)
+                }
+                let source = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+                guard let converter = AVAudioConverter(from: source.processingFormat, to: format),
+                      let input = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: 2048) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                let meta = try JSONSerialization.data(withJSONObject: ["type": "pcm", "sampleRate": 24000, "channels": 1])
+                guard channel.sendData(RTCDataBuffer(data: meta, isBinary: false)) else { throw CocoaError(.fileWriteUnknown) }
+                let started = Date()
+                var framesSent = 0
+                var finished = false
+                while !finished {
+                    guard self.sharesListening, self.shares[fileID] != nil, channel.readyState == .open else { return }
+                    try source.read(into: input)
+                    let eof = input.frameLength == 0
+                    var supplied = false
+                    let capacity = AVAudioFrameCount(ceil(Double(input.frameLength) * 24000 / source.processingFormat.sampleRate) + 256)
+                    guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { throw CocoaError(.fileReadCorruptFile) }
+                    var conversionError: NSError?
+                    let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+                        if eof { inputStatus.pointee = .endOfStream; return nil }
+                        if supplied { inputStatus.pointee = .noDataNow; return nil }
+                        supplied = true
+                        inputStatus.pointee = .haveData
+                        return input
+                    }
+                    if let conversionError { throw conversionError }
+                    guard status != .error else { throw CocoaError(.fileReadCorruptFile) }
+                    if output.frameLength > 0, let samples = output.floatChannelData?[0] {
+                        let bytes = Data(bytes: samples, count: Int(output.frameLength) * MemoryLayout<Float>.size)
+                        for offset in stride(from: 0, to: bytes.count, by: 16384) {
+                            guard channel.sendData(RTCDataBuffer(data: bytes.subdata(in: offset..<min(offset + 16384, bytes.count)), isBinary: true)) else {
+                                throw CocoaError(.fileWriteUnknown)
+                            }
+                        }
+                        framesSent += Int(output.frameLength)
+                        let delay = Double(framesSent) / 24000 - Date().timeIntervalSince(started)
+                        if delay > 0 { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+                    }
+                    if channel.bufferedAmount > 1_048_576 { throw CocoaError(.fileWriteOutOfSpace) }
+                    finished = status == .endOfStream
+                }
+                let eof = try JSONSerialization.data(withJSONObject: ["type": "eof"])
+                guard channel.sendData(RTCDataBuffer(data: eof, isBinary: false)) else { throw CocoaError(.fileWriteUnknown) }
+                let deadline = Date().addingTimeInterval(5)
+                while channel.bufferedAmount > 0 {
+                    guard channel.readyState == .open else { return }
+                    guard Date() < deadline else { throw CocoaError(.fileWriteUnknown) }
+                    try await Task.sleep(nanoseconds: 25_000_000)
+                }
+            } catch {
+                self.errorMessage = "无法发送实时试听：\(error.localizedDescription)"
+                if let data = try? JSONSerialization.data(withJSONObject: ["type": "error"]) {
+                    _ = channel.sendData(RTCDataBuffer(data: data, isBinary: false))
+                }
+            }
+        }
+    }
+
+    private func receivePreview(_ buffer: RTCDataBuffer, peer: CandyPlazaPeer) {
+        guard previewFileID == peer.fileID, !peer.previewEnded else { return }
+        do {
+            guard buffer.data.count <= 16384 else { throw CocoaError(.fileReadTooLarge) }
+            if buffer.isBinary {
+                guard let audio = previewAudio else { throw CocoaError(.fileReadCorruptFile) }
+                try audio.append(buffer.data)
+                previewTimeout?.cancel()
+                let fileID = peer.fileID
+                previewTimeout = Task { @MainActor [weak self] in
+                    do { try await Task.sleep(nanoseconds: 15_000_000_000) } catch { return }
+                    guard let self, self.previewFileID == fileID else { return }
+                    self.errorMessage = "试听数据接收超时。"
+                    self.stopPreview()
+                }
+            } else {
+                let message = try JSONSerialization.jsonObject(with: buffer.data)
+                guard let control = message as? [String: Any], let type = control["type"] as? String else { throw CocoaError(.fileReadCorruptFile) }
+                switch type {
+                case "pcm":
+                    guard previewAudio == nil, control["sampleRate"] as? Int == 24000,
+                          control["channels"] as? Int == 1 else { throw CocoaError(.fileReadCorruptFile) }
+                    let audio = try CandyPreviewAudio()
+                    audio.onFinished = { [weak self] in self?.stopPreview() }
+                    previewAudio = audio
+                case "eof":
+                    guard let audio = previewAudio else { throw CocoaError(.fileReadCorruptFile) }
+                    peer.previewEnded = true
+                    previewTimeout?.cancel()
+                    previewTimeout = nil
+                    audio.finish()
+                default: throw CocoaError(.fileReadCorruptFile)
+                }
+            }
+        } catch {
+            errorMessage = "实时试听失败：\(error.localizedDescription)"
+            stopPreview()
+        }
     }
 
     private func sendFile(_ fileID: String, over channel: RTCDataChannel) {
@@ -878,10 +1099,66 @@ final class CandyPlazaService: ObservableObject {
     }
 }
 
+@MainActor
+private final class CandyPreviewAudio {
+    private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private let format: AVAudioFormat
+    private var queuedFrames = 0
+    private var ended = false
+    private var stopped = false
+    var onFinished: (() -> Void)?
+
+    init() throws {
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        self.format = format
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+        try AVAudioSession.sharedInstance().setActive(true)
+        try engine.start()
+    }
+
+    func append(_ data: Data) throws {
+        guard !stopped, !ended, !data.isEmpty, data.count <= 16384, data.count % 4 == 0 else { throw CocoaError(.fileReadCorruptFile) }
+        let frames = data.count / 4
+        guard queuedFrames + frames <= 24000 * 3,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
+              let destination = buffer.floatChannelData?[0] else { throw CocoaError(.fileReadTooLarge) }
+        data.copyBytes(to: UnsafeMutableRawBufferPointer(start: destination, count: data.count))
+        guard (0..<frames).allSatisfy({ destination[$0].isFinite }) else { throw CocoaError(.fileReadCorruptFile) }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        queuedFrames += frames
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.stopped else { return }
+                self.queuedFrames -= frames
+                if self.ended, self.queuedFrames == 0 { self.onFinished?() }
+            }
+        }
+        if !player.isPlaying { player.play() }
+    }
+
+    func finish() {
+        ended = true
+        if queuedFrames == 0 { onFinished?() }
+    }
+
+    func stop() {
+        stopped = true
+        onFinished = nil
+        player.stop()
+        engine.stop()
+    }
+}
+
 private final class CandyPlazaPeer: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDelegate {
     let remoteID: String
     let isServing: Bool
     var fileID: String?
+    var isPreview = false
+    var previewEnded = false
     var connection: RTCPeerConnection?
     var channel: RTCDataChannel?
     var receivedData = Data()
@@ -889,7 +1166,7 @@ private final class CandyPlazaPeer: NSObject, RTCPeerConnectionDelegate, RTCData
     var onCandidate: ((RTCIceCandidate) -> Void)?
     var onRemoteChannel: ((RTCDataChannel) -> Void)?
     var onChannelOpen: ((String, RTCDataChannel) -> Void)?
-    var onData: ((RTCDataBuffer) -> Void)?
+    var onData: (@MainActor (RTCDataBuffer) -> Void)?
     var onFailure: ((String) -> Void)?
     var onClosed: (() -> Void)?
     private var pendingCandidates: [RTCIceCandidate] = []

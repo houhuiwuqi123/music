@@ -44,9 +44,11 @@ Existing `publish`, `unpublish`, `signal` and `plaza` messages remain available 
 }
 ```
 
-The optional file is the currently shared song. The server assigns `clientId`, `region`, `file.ownerId` and `file.ownerName`, and sends `listeners` snapshots plus compatible `plaza` file snapshots. The same file stays available on pause; a different file replaces the previous automatic share. Send `{"type":"listening"}` to withdraw both. Missing file metadata allows a status-only user to appear but not be downloaded.
+The optional file is the currently shared song. Listening metadata also accepts `avatar`, a plain base64 JPEG/PNG up to 32 KB and 256 pixels per dimension; the App produces a 96-pixel JPEG. The server assigns `clientId`, `region`, `file.ownerId` and `file.ownerName`, clears client-supplied `offlineAt`, and sends `listeners` snapshots plus compatible `plaza` file snapshots. The same file stays available on pause; a different file replaces the previous automatic share. Send `{"type":"listening"}` to withdraw both immediately.
 
-Refresh every 30 seconds; status and automatic files expire after 90 seconds, checked every 10 seconds. Disconnect removes them. File bytes still travel through WebRTC, never through this server.
+Refresh every 30 seconds. A detected disconnect or 90 seconds without a refresh removes downloadable files and sets `offlineAt` to server Unix seconds. The remaining listener metadata is removed after 60 seconds, checked each second. Reconnecting with the same persisted client ID and publishing current status restores the star immediately; an old socket's cleanup cannot invalidate its replacement. Graceful opt-out removes state without the offline grace period.
+
+Real-time preview uses a separate ordered `preview:<fileId>` WebRTC channel; the existing backend relays its SDP/ICE unchanged. Text `{"type":"pcm","sampleRate":24000,"channels":1}` precedes little-endian Float32 mono PCM binary chunks (at most 16 KB), paced to playback time. `{"type":"eof"}` ends the stream; `{"type":"error"}` signals failure. Downloads still use the original `file:<fileId>` channel. Neither preview audio nor original file bytes travel through the backend.
 
 ## Tests
 
@@ -56,6 +58,6 @@ Run `go test ./...` and start an isolated service with `go run . -port 18081`. I
 node .\verify-listening.cjs
 ```
 
-This publishes temporary test metadata (no audio) and checks automatic files, pause, song replacement, withdrawal, region/identity ownership, disconnect/reconnection, snapshots and legacy file signaling. Do not run this against a production plaza.
+This publishes temporary test metadata (no audio) and checks avatars, invalid image rejection, automatic files, pause, song replacement, withdrawal, region/identity ownership, offline/reconnection snapshots and file/preview signaling. Unit tests check the exact 59-/60-second retention boundary and stale socket cleanup. These backend tests do not exercise AVAudioConverter, actual WebRTC audio or SwiftUI rendering; those require an iOS build and device tests. Do not run the integration script against production.
 
 For a real database lookup test, set `GEOIP_TEST_DB` to the public MaxMind `GeoIP2-City-Test.mmdb` fixture and run `go test -v ./internal/geoip`. Without that fixture, only this fixture-specific test is skipped; proxy and missing-database tests still run.

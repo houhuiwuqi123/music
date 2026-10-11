@@ -4,6 +4,7 @@ import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var plaza: CandyPlazaService
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
@@ -26,6 +27,14 @@ struct SettingsView: View {
 
                 Section(settings.text("notifications")) {
                     Toggle(settings.text("notifications"), isOn: $settings.notificationsEnabled)
+                }
+                Section("广场") {
+                    Toggle("公开正在听并分享歌曲", isOn: Binding(
+                        get: { plaza.sharesListening },
+                        set: { plaza.setSharesListening($0) }
+                    ))
+                    Text("默认开启。其他在线用户可以试听或下载当前歌曲；关闭后停止公开和分享。仅分享你有权分享的音乐。")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Section(settings.text("about")) {

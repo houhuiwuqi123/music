@@ -24,6 +24,8 @@ type Listening struct {
 	IsPlaying bool      `json:"isPlaying"`
 	Region    string    `json:"region"`
 	File      *FileMeta `json:"file,omitempty"`
+	Avatar    string    `json:"avatar,omitempty"`
+	OfflineAt *int64    `json:"offlineAt,omitempty"`
 }
 
 // FileMeta 描述广场上发布的一个文件。
