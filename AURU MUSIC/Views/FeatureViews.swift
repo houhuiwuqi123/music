@@ -872,6 +872,11 @@ struct PlaylistsView: View {
                         .listRowInsets(EdgeInsets(top: 1.5, leading: 14, bottom: 1.5, trailing: 14))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button(role: .destructive) { deletingPlaylist = playlist } label: {
+                                Label(settings.text("delete"), systemImage: "trash")
+                            }
+                        }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) { deletingPlaylist = playlist } label: {
                                 Label(settings.text("delete"), systemImage: "trash")
@@ -908,9 +913,8 @@ struct PlaylistsView: View {
                 isPresented: Binding(get: { deletingPlaylist != nil }, set: { if !$0 { deletingPlaylist = nil } }),
                 titleVisibility: .visible
             ) {
-                Button(settings.text("playlistOnly")) { deletePendingPlaylist(songAction: .keep) }
-                Button(settings.text("playlistAndLibrary"), role: .destructive) { deletePendingPlaylist(songAction: .removeFromLibrary) }
-                Button(settings.text("playlistAndFiles"), role: .destructive) { deletePendingPlaylist(songAction: .deleteFiles) }
+                Button(settings.text("playlistOnly")) { deletePendingPlaylist(deleteLocalMusic: false) }
+                Button(settings.text("playlistAndFiles"), role: .destructive) { deletePendingPlaylist(deleteLocalMusic: true) }
                 Button(settings.text("cancel"), role: .cancel) { deletingPlaylist = nil }
             } message: {
                 Text(settings.text("deletePlaylistMessage"))
@@ -923,17 +927,9 @@ struct PlaylistsView: View {
         }
     }
 
-    private enum PlaylistSongAction: Equatable { case keep, removeFromLibrary, deleteFiles }
-
-    private func deletePendingPlaylist(songAction: PlaylistSongAction) {
+    private func deletePendingPlaylist(deleteLocalMusic: Bool) {
         guard let playlist = deletingPlaylist else { return }
-        if songAction != .keep {
-            for track in dataStore.tracks(in: playlist, library: library.tracks) {
-                library.removeTrack(id: track.id, deleteFile: songAction == .deleteFiles)
-            }
-            dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)), validVideoIDs: Set(library.videos.map(\.id)))
-        }
-        dataStore.deletePlaylist(id: playlist.id)
+        _ = dataStore.deletePlaylist(id: playlist.id, deleteLocalMusic: deleteLocalMusic, library: library)
         deletingPlaylist = nil
     }
 }
@@ -1078,9 +1074,8 @@ struct PlaylistDetailView: View {
             isPresented: $showsDeleteOptions,
             titleVisibility: .visible
         ) {
-            Button(settings.text("playlistOnly")) { deletePlaylist(songAction: .keep) }
-            Button(settings.text("playlistAndLibrary"), role: .destructive) { deletePlaylist(songAction: .removeFromLibrary) }
-            Button(settings.text("playlistAndFiles"), role: .destructive) { deletePlaylist(songAction: .deleteFiles) }
+            Button(settings.text("playlistOnly")) { deletePlaylist(deleteLocalMusic: false) }
+            Button(settings.text("playlistAndFiles"), role: .destructive) { deletePlaylist(deleteLocalMusic: true) }
             Button(settings.text("cancel"), role: .cancel) {}
         } message: {
             Text(settings.text("deletePlaylistMessage"))
@@ -1103,16 +1098,8 @@ struct PlaylistDetailView: View {
         }
     }
 
-    private enum DetailPlaylistSongAction: Equatable { case keep, removeFromLibrary, deleteFiles }
-
-    private func deletePlaylist(songAction: DetailPlaylistSongAction) {
-        if songAction != .keep {
-            for track in tracks {
-                library.removeTrack(id: track.id, deleteFile: songAction == .deleteFiles)
-            }
-            dataStore.reconcile(validTrackIDs: Set(library.tracks.map(\.id)), validVideoIDs: Set(library.videos.map(\.id)))
-        }
-        dataStore.deletePlaylist(id: playlistID)
+    private func deletePlaylist(deleteLocalMusic: Bool) {
+        guard dataStore.deletePlaylist(id: playlistID, deleteLocalMusic: deleteLocalMusic, library: library) else { return }
         dismiss()
     }
 }

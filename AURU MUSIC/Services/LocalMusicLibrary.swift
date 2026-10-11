@@ -207,11 +207,19 @@ final class LocalMusicLibrary: ObservableObject {
         saveLibrary()
     }
 
-    func removeTrack(id: UUID, deleteFile: Bool = true) {
-        guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
+    @discardableResult
+    func removeTrack(id: UUID, deleteFile: Bool = true) -> Bool {
+        guard let index = tracks.firstIndex(where: { $0.id == id }) else { return true }
         let path = tracks[index].fileURL.standardizedFileURL.path
         if deleteFile {
-            try? fileManager.removeItem(at: tracks[index].fileURL)
+            do {
+                try fileManager.removeItem(at: tracks[index].fileURL)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                // A file already removed outside the app only needs index cleanup.
+            } catch {
+                importError = "\(tracks[index].fileURL.lastPathComponent): \(error.localizedDescription)"
+                return false
+            }
             hiddenTrackPaths.remove(path)
         } else {
             hiddenTrackPaths.insert(path)
@@ -219,6 +227,7 @@ final class LocalMusicLibrary: ObservableObject {
         tracks.remove(at: index)
         saveHiddenTrackPaths()
         saveLibrary()
+        return true
     }
 
     func updateArtwork(_ artworkData: Data, for trackID: UUID) {

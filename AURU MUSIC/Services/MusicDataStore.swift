@@ -32,6 +32,23 @@ final class MusicDataStore: ObservableObject {
         save(playlists, file: playlistsFile)
     }
 
+    func deletePlaylist(id: UUID, deleteLocalMusic: Bool, library: LocalMusicLibrary) -> Bool {
+        guard let playlist = playlists.first(where: { $0.id == id }) else { return true }
+        if deleteLocalMusic {
+            defer {
+                reconcile(
+                    validTrackIDs: Set(library.tracks.map(\.id)),
+                    validVideoIDs: Set(library.videos.map(\.id))
+                )
+            }
+            for track in tracks(in: playlist, library: library.tracks) {
+                guard library.removeTrack(id: track.id, deleteFile: true) else { return false }
+            }
+        }
+        deletePlaylist(id: id)
+        return true
+    }
+
     func renamePlaylist(id: UUID, to name: String) {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty, let index = playlists.firstIndex(where: { $0.id == id }) else { return }

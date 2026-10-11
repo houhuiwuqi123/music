@@ -20,6 +20,7 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 - Deduplicates imported and discovered songs by normalized title, artist, album, and duration.
 - Song deletion asks whether to hide the song from the library while keeping its sandbox file or permanently delete the app's local copy.
 - Music and playlist rows support native full-swipe deletion with confirmation choices.
+- Playlist rows support right-swipe deletion as well as the existing left swipe. Every playlist deletion entry offers only two actions (plus Cancel): delete the playlist while keeping music, or delete the playlist and its local audio files. Local-file deletion also clears the songs from the library, other playlists, and playback statistics. If a file cannot be deleted, the error is shown and the playlist is kept; any files already deleted remain deleted.
 - Empty artist and playlist data no longer render empty glass cards.
 - The app icon asset is configured at `AURU MUSIC/Assets.xcassets/AppIcon.appiconset/AppIcon.png`.
 - Reads embedded lyrics and supports uploaded UTF-8 LRC/text lyrics with synchronized scrolling in Now Playing.
@@ -80,6 +81,7 @@ The repository is generated on Windows, where Xcode and the iOS SDK are unavaila
 
 ### Regression checks on iOS
 
+- Right-swipe or left-swipe a playlist row and use the playlist detail deletion menu. Each entry should show the same two choices plus Cancel. Cancel must leave everything unchanged. Keeping music must only delete the playlist. Deleting local music must remove the audio files, library songs, memberships in other playlists, and play stats; check after relaunch/foreground scanning. Test an empty playlist and a file-deletion failure (the playlist should remain, with an error).
 - Import an audio file and its same-stem UTF-8 LRC together (select lyrics first as well as audio first). The lyrics should display without an audio-read error. Repeat with an already imported/deduplicated song, and with an existing local filename collision.
 - Copy audio/LRC pairs into Documents using file sharing. Foreground the app, then add an LRC for an already indexed song and scan again. Check lyrics attach without replacing embedded or manually uploaded lyrics. Try uppercase `.LRC`, unmatched lyrics, invalid UTF-8, and ambiguous same-stem audio files; failed imports should explain the issue.
 - Start, pause/resume, skip, and switch songs/videos before the end: counts should not change, while recently played songs should update at start. Let playback finish in list/repeat-one modes: each completion should add exactly one play, including in the background.
