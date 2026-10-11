@@ -38,7 +38,7 @@ struct CandyPlazaView: View {
                 .presentationDragIndicator(.visible)
         }
         .confirmationDialog(
-            selectedFile.map { "接收文件" } ?? "接收文件",
+            "接收文件",
             isPresented: Binding(
                 get: { selectedFile != nil },
                 set: { if !$0 { selectedFile = nil } }
