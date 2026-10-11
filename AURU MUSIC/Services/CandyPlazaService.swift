@@ -9,12 +9,6 @@ struct CandyPlazaFile: Codable, Identifiable, Hashable {
     var ownerId: String? = nil
     var ownerName: String
 }
-if channel.readyState == .open,
-   let fileID = channel.label.split(separator: ":").last.map(String.init) {
-    peer.fileID = fileID
-    peer.onChannelOpen?(fileID, channel)
-}
-
 struct CandyPlazaHistory: Codable, Identifiable {
     var id = UUID()
     var name: String
@@ -136,7 +130,7 @@ final class CandyPlazaService: ObservableObject {
     private let shareFolder: URL
     private let downloadFolder: URL
 
-    override init() {
+    init() {
         let defaults = UserDefaults.standard
         let storedNickname = defaults.string(forKey: "candy_nickname")
         let generatedNickname = "访客\(Int.random(in: 1000...9999))"
@@ -154,7 +148,6 @@ final class CandyPlazaService: ObservableObject {
         downloadFolder = documents.appendingPathComponent("Candy Downloads", isDirectory: true)
         publishHistory = Self.loadHistory(forKey: "candy_publish_log")
         receiveHistory = Self.loadHistory(forKey: "candy_receive_log")
-        super.init()
     }
 
     func start() {
