@@ -344,111 +344,111 @@ private struct CandyAmbientStars: View {
                     let rect = CGRect(x: x, y: y, width: 1.4, height: 1.4)
                     context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(opacity)))
                 }
-
-                private struct CandyAstronautScene: View {
-                    var body: some View {
-                        Canvas { context, size in
-                            let center = CGPoint(x: size.width * 0.5, y: size.height * 0.76)
-                            let radius = min(size.width * 0.35, 135)
-                            var planet = Path()
-                            planet.addArc(center: center, radius: radius, startAngle: .degrees(180), endAngle: .degrees(360), clockwise: false)
-                            planet.closeSubpath()
-                            context.fill(planet, with: .color(.white.opacity(0.08)))
-                            context.stroke(planet, with: .color(.white.opacity(0.65)), lineWidth: 1.5)
-                            let helmet = CGRect(x: center.x - 30, y: center.y - radius - 66, width: 42, height: 42)
-                            context.fill(Path(ellipseIn: helmet), with: .color(.white.opacity(0.82)))
-                            context.fill(Path(ellipseIn: helmet.insetBy(dx: 6, dy: 10).offsetBy(dx: 3, dy: -1)), with: .color(.indigo.opacity(0.9)))
-                            let body = CGRect(x: center.x - 25, y: helmet.maxY - 2, width: 34, height: 32)
-                            context.fill(Path(roundedRect: body, cornerRadius: 10), with: .color(.white.opacity(0.75)))
-                            var limbs = Path()
-                            limbs.move(to: CGPoint(x: body.midX, y: body.maxY - 6))
-                            limbs.addLine(to: CGPoint(x: body.maxX + 20, y: body.maxY + 4))
-                            limbs.addLine(to: CGPoint(x: body.maxX + 26, y: body.maxY + 20))
-                            limbs.move(to: CGPoint(x: body.minX + 5, y: body.minY + 8))
-                            limbs.addLine(to: CGPoint(x: body.minX - 9, y: body.maxY + 5))
-                            context.stroke(limbs, with: .color(.white.opacity(0.8)), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
-                            for index in 0..<7 {
-                                let x = center.x - radius + CGFloat(index) * radius / 3
-                                let y = center.y - 15 - CGFloat(index % 3) * 14
-                                context.stroke(Path(ellipseIn: CGRect(x: x, y: y, width: 14, height: 5)), with: .color(.white.opacity(0.15)), lineWidth: 1)
-                            }
-                        }
-                    }
-                }
-
-                private struct CandyProfileView: View {
-                    @EnvironmentObject private var plaza: CandyPlazaService
-                    @Environment(\.dismiss) private var dismiss
-                    @State private var name = ""
-                    @State private var photo: PhotosPickerItem?
-                    @State private var image: UIImage?
-                    @State private var removesAvatar = false
-                    @State private var loading = false
-                    @State private var profileError: String?
-
-                    var body: some View {
-                        NavigationStack {
-                            Form {
-                                TextField("昵称", text: $name)
-                                PhotosPicker(selection: $photo, matching: .images) {
-                                    Label("选择头像", systemImage: "photo")
-                                }
-                                if let image {
-                                    Image(uiImage: image).resizable().scaledToFit().frame(height: 100)
-                                } else if !removesAvatar, let encoded = plaza.avatar,
-                                          let data = Data(base64Encoded: encoded), let avatar = UIImage(data: data) {
-                                    Image(uiImage: avatar).resizable().scaledToFit().frame(height: 100)
-                                }
-                                Button("移除头像", role: .destructive) {
-                                    image = nil
-                                    photo = nil
-                                    removesAvatar = true
-                                }
-                                if loading { ProgressView() }
-                                if let profileError { Text(profileError).foregroundStyle(.red) }
-                            }
-                            .navigationTitle("广场资料")
-                            .toolbar {
-                                ToolbarItem(placement: .cancellationAction) {
-                                    Button("取消") { dismiss() }
-                                }
-                                ToolbarItem(placement: .confirmationAction) {
-                                    Button("保存") {
-                                        if plaza.updateProfile(name: name, image: image, removeAvatar: removesAvatar) {
-                                            dismiss()
-                                        } else {
-                                            profileError = plaza.errorMessage
-                                        }
-                                    }
-                                    .disabled(loading || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 40)
-                                }
-                            }
-                        }
-                        .onAppear { name = plaza.nickname }
-                        .onChange(of: photo) { item in
-                            guard let item else { return }
-                            loading = true
-                            Task { @MainActor in
-                                do {
-                                    guard let data = try await item.loadTransferable(type: Data.self),
-                                          data.count <= 10_000_000, let loaded = UIImage(data: data) else {
-                                        throw CocoaError(.fileReadCorruptFile)
-                                    }
-                                    guard photo == item else { return }
-                                    image = loaded
-                                    removesAvatar = false
-                                    profileError = nil
-                                } catch {
-                                    guard photo == item else { return }
-                                    profileError = "无法加载头像：\(error.localizedDescription)"
-                                }
-                                loading = false
-                            }
-                        }
-                    }
-                }
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+private struct CandyAstronautScene: View {
+    var body: some View {
+        Canvas { context, size in
+            let center = CGPoint(x: size.width * 0.5, y: size.height * 0.76)
+            let radius = min(size.width * 0.35, 135)
+            var planet = Path()
+            planet.addArc(center: center, radius: radius, startAngle: .degrees(180), endAngle: .degrees(360), clockwise: false)
+            planet.closeSubpath()
+            context.fill(planet, with: .color(.white.opacity(0.08)))
+            context.stroke(planet, with: .color(.white.opacity(0.65)), lineWidth: 1.5)
+            let helmet = CGRect(x: center.x - 30, y: center.y - radius - 66, width: 42, height: 42)
+            context.fill(Path(ellipseIn: helmet), with: .color(.white.opacity(0.82)))
+            context.fill(Path(ellipseIn: helmet.insetBy(dx: 6, dy: 10).offsetBy(dx: 3, dy: -1)), with: .color(.indigo.opacity(0.9)))
+            let body = CGRect(x: center.x - 25, y: helmet.maxY - 2, width: 34, height: 32)
+            context.fill(Path(roundedRect: body, cornerRadius: 10), with: .color(.white.opacity(0.75)))
+            var limbs = Path()
+            limbs.move(to: CGPoint(x: body.midX, y: body.maxY - 6))
+            limbs.addLine(to: CGPoint(x: body.maxX + 20, y: body.maxY + 4))
+            limbs.addLine(to: CGPoint(x: body.maxX + 26, y: body.maxY + 20))
+            limbs.move(to: CGPoint(x: body.minX + 5, y: body.minY + 8))
+            limbs.addLine(to: CGPoint(x: body.minX - 9, y: body.maxY + 5))
+            context.stroke(limbs, with: .color(.white.opacity(0.8)), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
+            for index in 0..<7 {
+                let x = center.x - radius + CGFloat(index) * radius / 3
+                let y = center.y - 15 - CGFloat(index % 3) * 14
+                context.stroke(Path(ellipseIn: CGRect(x: x, y: y, width: 14, height: 5)), with: .color(.white.opacity(0.15)), lineWidth: 1)
+            }
+        }
+    }
+}
+
+private struct CandyProfileView: View {
+    @EnvironmentObject private var plaza: CandyPlazaService
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var photo: PhotosPickerItem?
+    @State private var image: UIImage?
+    @State private var removesAvatar = false
+    @State private var loading = false
+    @State private var profileError: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("昵称", text: $name)
+                PhotosPicker(selection: $photo, matching: .images) {
+                    Label("选择头像", systemImage: "photo")
+                }
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFit().frame(height: 100)
+                } else if !removesAvatar, let encoded = plaza.avatar,
+                          let data = Data(base64Encoded: encoded), let avatar = UIImage(data: data) {
+                    Image(uiImage: avatar).resizable().scaledToFit().frame(height: 100)
+                }
+                Button("移除头像", role: .destructive) {
+                    image = nil
+                    photo = nil
+                    removesAvatar = true
+                }
+                if loading { ProgressView() }
+                if let profileError { Text(profileError).foregroundStyle(.red) }
+            }
+            .navigationTitle("广场资料")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        if plaza.updateProfile(name: name, image: image, removeAvatar: removesAvatar) {
+                            dismiss()
+                        } else {
+                            profileError = plaza.errorMessage
+                        }
+                    }
+                    .disabled(loading || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 40)
+                }
+            }
+        }
+        .onAppear { name = plaza.nickname }
+        .onChange(of: photo) { item in
+            guard let item else { return }
+            loading = true
+            Task { @MainActor in
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self),
+                          data.count <= 10_000_000, let loaded = UIImage(data: data) else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    guard photo == item else { return }
+                    image = loaded
+                    removesAvatar = false
+                    profileError = nil
+                } catch {
+                    guard photo == item else { return }
+                    profileError = "无法加载头像：\(error.localizedDescription)"
+                }
+                loading = false
+            }
+        }
     }
 }

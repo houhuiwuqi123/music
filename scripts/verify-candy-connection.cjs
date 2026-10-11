@@ -9,7 +9,31 @@ const service = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Services', 'Candy
 const view = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'CandyPlazaView.swift'), 'utf8');
 const plist = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Info.plist'), 'utf8');
 
+function verifyViewScopes(source) {
+    // This limited structural check is not a Swift parser or type-checker.
+    const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"/g, '');
+    const required = new Set(['CandyPlazaView', 'CandyFileStar', 'CandyAmbientStars', 'CandyAstronautScene', 'CandyProfileView']);
+    let depth = 0;
+    for (const match of code.matchAll(/\bstruct\s+(\w+)|[{}]/g)) {
+        if (match[1]) {
+            if (required.has(match[1])) {
+                assert.equal(depth, 0, `${match[1]} must be declared at file scope`);
+                required.delete(match[1]);
+            }
+        } else if (match[0] === '{') {
+            depth++;
+        } else {
+            depth--;
+            assert.ok(depth >= 0, 'Unexpected closing brace in plaza view');
+        }
+    }
+    assert.equal(depth, 0, 'Unclosed scope in plaza view');
+    assert.equal(required.size, 0, 'Missing plaza view declarations');
+}
+
 function verifySource() {
+    verifyViewScopes(view);
+    assert.throws(() => verifyViewScopes(view.replace('private struct CandyAstronautScene', '{ private struct CandyAstronautScene')));
     assert.ok(service.includes('URLComponents(string: "wss://music.webtrc.eu.cc/ws")'));
     assert.ok(service.includes('URLQueryItem(name: "id", value: clientID)'));
     assert.ok(service.includes('15_000_000_000'));
