@@ -101,6 +101,7 @@ final class CandyPlazaService: ObservableObject {
     }
 
     @Published private(set) var connectionState: ConnectionState = .disconnected
+    @Published private(set) var connectionError: String?
     @Published private(set) var files: [CandyPlazaFile] = []
     @Published private(set) var shares: [String: CandyPlazaFile] = [:]
     @Published private(set) var downloads: [String: CandyPlazaDownload] = [:]
@@ -117,6 +118,7 @@ final class CandyPlazaService: ObservableObject {
     private let peerFactory: RTCPeerConnectionFactory
     private var socket: URLSessionWebSocketTask?
     private var reconnectTask: Task<Void, Never>?
+    private var connectionTimeoutTask: Task<Void, Never>?
     private var outgoingMessages: [String] = []
     private var outgoingMessageIndex = 0
     private var isSendingMessage = false
@@ -161,6 +163,8 @@ final class CandyPlazaService: ObservableObject {
         hasStarted = false
         reconnectTask?.cancel()
         reconnectTask = nil
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         outgoingMessages.removeAll()
@@ -173,6 +177,18 @@ final class CandyPlazaService: ObservableObject {
         }
         servingPeers.removeAll()
         fetchingPeers.removeAll()
+        earlyCandidates.removeAll()
+        for fileID in Array(downloads.keys) {
+            guard var download = downloads[fileID],
+                  case .downloading = download.state else { continue }
+            download.state = .failed("广场连接已停止，请重新接收文件。")
+            downloads[fileID] = download
+        }
+    }
+
+    func retryConnection() {
+        stop()
+        start()
     }
 
     func clearPublishHistory() {
@@ -298,7 +314,7 @@ final class CandyPlazaService: ObservableObject {
 
     private func openSocket() {
         guard hasStarted else { return }
-        var components = URLComponents(string: "ws://webtrc.com/ws")
+        var components = URLComponents(string: "wss://webtrc.com/ws")
         components?.queryItems = [URLQueryItem(name: "id", value: clientID)]
         guard let url = components?.url else {
             errorMessage = "广场服务器地址无效。"
@@ -312,6 +328,15 @@ final class CandyPlazaService: ObservableObject {
         let task = session.webSocketTask(with: url)
         socket = task
         task.resume()
+        connectionTimeoutTask = Task { @MainActor [weak self, weak task] in
+            do {
+                try await Task.sleep(nanoseconds: 15_000_000_000)
+            } catch {
+                return
+            }
+            guard let self, let task, self.socket === task else { return }
+            self.disconnect(task, message: "广场连接超时：15 秒内未收到服务器快照，请检查网络或服务器状态。")
+        }
         receiveMessages(from: task)
     }
 
@@ -321,6 +346,7 @@ final class CandyPlazaService: ObservableObject {
             while self.hasStarted, self.socket === task {
                 do {
                     let message = try await task.receive()
+                    guard self.hasStarted, self.socket === task else { return }
                     let data: Data
                     switch message {
                     case .string(let string): data = Data(string.utf8)
@@ -331,19 +357,49 @@ final class CandyPlazaService: ObservableObject {
                     self.handle(envelope)
                 } catch {
                     guard self.socket === task else { return }
-                    self.connectionState = .disconnected
-                    self.socket = nil
-                    self.scheduleReconnect()
+                    let failure = error as NSError
+                    let status = (task.response as? HTTPURLResponse).map { "，HTTP \($0.statusCode)" } ?? ""
+                    self.disconnect(task, message: "广场连接失败：\(failure.localizedDescription)（\(failure.domain) \(failure.code)\(status)）。")
                     return
                 }
             }
         }
     }
 
+    private func disconnect(_ task: URLSessionWebSocketTask, message: String) {
+        guard socket === task else { return }
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
+        socket = nil
+        task.cancel(with: .goingAway, reason: nil)
+        outgoingMessages.removeAll()
+        outgoingMessageIndex = 0
+        isSendingMessage = false
+        connectionState = .disconnected
+        connectionError = message
+        files = []
+        for fileID in Array(downloads.keys) {
+            guard var download = downloads[fileID],
+                  case .downloading = download.state else { continue }
+            download.state = .failed(message)
+            downloads[fileID] = download
+        }
+        let peers = Array(servingPeers.values) + Array(fetchingPeers.values)
+        servingPeers.removeAll()
+        fetchingPeers.removeAll()
+        earlyCandidates.removeAll()
+        peers.forEach { $0.connection?.close() }
+        scheduleReconnect()
+    }
+
     private func scheduleReconnect() {
         guard hasStarted, reconnectTask == nil else { return }
         reconnectTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            do {
+                try await Task.sleep(nanoseconds: 3_000_000_000)
+            } catch {
+                return
+            }
             guard let self, self.hasStarted else { return }
             self.reconnectTask = nil
             self.clientID = UUID().uuidString.lowercased()
@@ -352,9 +408,12 @@ final class CandyPlazaService: ObservableObject {
     }
 
     private func handle(_ message: CandyPlazaMessage) {
-        connectionState = .connected
         switch message.type {
         case "plaza":
+            connectionTimeoutTask?.cancel()
+            connectionTimeoutTask = nil
+            connectionState = .connected
+            connectionError = nil
             files = message.files ?? []
             if shouldRepublishShares {
                 shouldRepublishShares = false
@@ -510,8 +569,10 @@ final class CandyPlazaService: ObservableObject {
             Task { @MainActor in
                 guard let self, let peer else { return }
                 if peer.isServing {
+                    guard self.servingPeers[remoteID] === peer else { return }
                     self.servingPeers.removeValue(forKey: remoteID)
                 } else {
+                    guard self.fetchingPeers[remoteID] === peer else { return }
                     self.fetchingPeers.removeValue(forKey: remoteID)
                     if let fileID = peer.fileID,
                            let download = self.downloads[fileID],
@@ -691,14 +752,7 @@ final class CandyPlazaService: ObservableObject {
                     try await socket.send(.string(message))
                 } catch {
                     guard self.socket === socket else { return }
-                    self.errorMessage = error.localizedDescription
-                    self.connectionState = .disconnected
-                    self.socket = nil
-                    self.outgoingMessages.removeAll()
-                    self.outgoingMessageIndex = 0
-                    self.isSendingMessage = false
-                    socket.cancel(with: .goingAway, reason: nil)
-                    self.scheduleReconnect()
+                    self.disconnect(socket, message: "广场消息发送失败：\(error.localizedDescription)")
                     return
                 }
             }

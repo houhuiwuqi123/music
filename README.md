@@ -42,7 +42,7 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 5. Choose an iPhone simulator or connected iPhone and press **Run**.
 6. Tap the import button and choose audio files from the Files picker.
 
-The deployment target is iOS 16.0. The Xcode project resolves the WebRTC binary Swift Package when first opened/built. Candy广场 connects to `ws://webtrc.com/ws` and uses Google STUN for WebRTC; its HTTP ATS exception is limited to `webtrc.com`.
+The deployment target is iOS 16.0. The Xcode project resolves the WebRTC binary Swift Package when first opened/built. Candy广场 connects to `wss://webtrc.com/ws` and uses Google STUN for WebRTC. No insecure ATS exception is needed.
 
 When updating a macOS copy, sync the complete project, including both Candy Plaza Swift files and `MusicPlayer.xcodeproj/project.pbxproj`. Both files are already registered in the AURU MUSIC target's Compile Sources phase. If Xcode reports `Cannot find 'CandyPlazaService' in scope`, check the earlier build errors in the service file and confirm these files and the project configuration were copied together.
 
@@ -86,7 +86,13 @@ The repository is generated on Windows, where Xcode and the iOS SDK are unavaila
 
 ### Candy广场
 
-The new navigation tab implements the `SWIFT_PORT_PROMPT.md` protocol against the existing webtrc.com signaling service. Client IDs are regenerated per connection, while the visitor nickname and the last 100 publish/receive records are stored locally. Published files are copied to `Documents/Candy Shares` and are available only while the app is connected; received files are written to `Documents/Candy Downloads` and can be shared from the receive history. File bytes travel over WebRTC data channels, not through the signaling service. The service uses plaintext WebSocket as specified by the existing endpoint and a host-scoped App Transport Security exception. WebRTC uses STUN only; restrictive NATs may prevent a direct connection.
+The new navigation tab implements the `SWIFT_PORT_PROMPT.md` message protocol against the existing webtrc.com signaling service. Client IDs are regenerated per connection, while the visitor nickname and the last 100 publish/receive records are stored locally. Published files are copied to `Documents/Candy Shares` and are available only while the app is connected; received files are written to `Documents/Candy Downloads` and can be shared from the receive history. File bytes travel over WebRTC data channels, not through the signaling service. The client uses secure WebSocket rather than the prompt's older plaintext URL because the public HTTP endpoint redirects to HTTPS. WebRTC uses STUN only; restrictive NATs may prevent a direct connection.
+
+The initial server snapshot must arrive within 15 seconds before the UI reports online. Failed handshakes, receive/send errors, and snapshot timeouts display a connection error and retry after 3 seconds; a manual reconnect button is also available. Old socket responses and cancelled retries cannot affect a newer connection. An empty server snapshot may omit `files` and is treated as an empty plaza.
+
+For public connectivity checks, do not rely on a local hosts entry for webtrc.com. Resolve public DNS and verify the TLS WebSocket upgrade returns HTTP 101 plus a `plaza` snapshot. Cloudflare HTTP 522 means the edge cannot reach the origin; the server operator must check the origin address, port/firewall and reverse-proxy WebSocket configuration. Changing the app alone cannot repair this server-side failure.
+
+Run `node scripts/verify-candy-connection.cjs` for source/config regression checks, or add `--live` to also verify every public IPv4 address using validated TLS, HTTP 101 and the actual initial snapshot. The live check ignores the local hosts mapping, publishes no files, and returns a failing exit code for unavailable endpoints. These checks do not replace an Xcode build or iOS-device test.
 
 ### Regression checks on iOS
 

@@ -21,6 +21,16 @@ struct CandyPlazaView: View {
         ScrollView {
             VStack(spacing: 16) {
                 header
+                if let connectionError = plaza.connectionError {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(connectionError)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Button("重新连接") { plaza.retryConnection() }
+                            .font(.caption.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 searchBar
                 starField
                     .frame(height: 455)
