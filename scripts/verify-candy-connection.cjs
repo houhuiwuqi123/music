@@ -6,13 +6,14 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const service = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Services', 'CandyPlazaService.swift'), 'utf8');
+const transfer = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Services', 'CandyReliableTransfer.swift'), 'utf8');
 const view = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'CandyPlazaView.swift'), 'utf8');
 const plist = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Info.plist'), 'utf8');
 
 function verifyViewScopes(source) {
     // This limited structural check is not a Swift parser or type-checker.
     const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"/g, '');
-    const required = new Set(['CandyPlazaView', 'CandyFileStar', 'CandyAmbientStars', 'CandyAstronautScene', 'CandyProfileView']);
+    const required = new Set(['CandyPlazaView', 'CandyFileStar', 'CandyProfileView']);
     let depth = 0;
     for (const match of code.matchAll(/\bstruct\s+(\w+)|[{}]/g)) {
         if (match[1]) {
@@ -31,9 +32,54 @@ function verifyViewScopes(source) {
     assert.equal(required.size, 0, 'Missing plaza view declarations');
 }
 
+function verifyStarMotion() {
+    const start = view.match(/let startX = ([\d.]+) \+ Double\(seed % 100\) \/ 100 \* ([\d.]+)/);
+    const end = view.match(/let endX = ([\d.]+) \+ Double\(\(seed >> 8\) % 100\) \/ 100 \* ([\d.]+)/);
+    const vertical = view.match(/let y = ([\d.]+) - progress \* ([\d.]+)/);
+    const scale = view.match(/let scale = ([\d.]+) - progress \* ([\d.]+)/);
+    assert.ok(start && end && vertical && scale, 'Missing meteor trajectory coefficients');
+    assert.ok(view.includes('let x = startX + (endX - startX) * progress'));
+    assert.ok(view.includes('let progress = time - Double(cycle)'));
+    assert.ok(view.includes('let time = max(0, date.timeIntervalSince(flightStartedAt) - Double(hash % 1000) / 1000 * 3) / 14'));
+    assert.ok(view.includes('flightStartedAt = flightStartedAt.addingTimeInterval(Date().timeIntervalSince(frozenDate))'));
+    for (let a = 0; a < 100; a++) {
+        for (let b = 0; b < 100; b++) {
+            const startX = Number(start[1]) + a / 100 * Number(start[2]);
+            const endX = Number(end[1]) + b / 100 * Number(end[2]);
+            assert.ok(startX >= 0.80 && startX <= 1, 'Must emerge at bottom-right');
+            assert.ok(endX >= 0 && endX <= 0.25, 'Must finish at top-left');
+            let previous = { x: Infinity, y: Infinity, size: Infinity };
+            for (let step = 0; step <= 20; step++) {
+                const progress = step / 20;
+                const x = startX + (endX - startX) * progress;
+                const y = Number(vertical[1]) - progress * Number(vertical[2]);
+                const size = Number(scale[1]) - progress * Number(scale[2]);
+                assert.ok(x < previous.x && y < previous.y && size < previous.size);
+                assert.ok(size > 0);
+                if (step === 0) assert.ok(y >= 0.80 && y <= 1);
+                if (step === 20) assert.ok(y >= 0 && y <= 0.25);
+                previous = { x, y, size };
+            }
+        }
+    }
+    for (const name of ['PlazaEmpty', 'PlazaOnline']) {
+        const folder = path.join(root, 'AURU MUSIC', 'Assets.xcassets', `${name}.imageset`);
+        const asset = JSON.parse(fs.readFileSync(path.join(folder, 'Contents.json'), 'utf8'));
+        assert.equal(asset.images[0].idiom, 'universal');
+        const image = fs.readFileSync(path.join(folder, asset.images[0].filename));
+        assert.equal(image.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+        assert.equal(image.readUInt32BE(16), 768);
+        assert.equal(image.readUInt32BE(20), 768);
+    }
+    assert.ok(view.includes('Image(plaza.listeners.contains { !$0.isOffline } ? "PlazaOnline" : "PlazaEmpty")'));
+    assert.ok(view.includes('alignment: .bottomTrailing'));
+    assert.ok(view.includes('.offset(x: 23, y: 23)'));
+}
+
 function verifySource() {
     verifyViewScopes(view);
-    assert.throws(() => verifyViewScopes(view.replace('private struct CandyAstronautScene', '{ private struct CandyAstronautScene')));
+    assert.throws(() => verifyViewScopes(view.replace('private struct CandyProfileView', '{ private struct CandyProfileView')));
+    verifyStarMotion();
     assert.ok(service.includes('URLComponents(string: "wss://music.webtrc.eu.cc/ws")'));
     assert.ok(service.includes('URLQueryItem(name: "id", value: clientID)'));
     assert.ok(service.includes('15_000_000_000'));
@@ -45,9 +91,8 @@ function verifySource() {
     assert.ok(service.includes('failure.domain') && service.includes('failure.code') && service.includes('HTTPURLResponse'));
     assert.ok(service.includes('self.disconnect(socket, message:'));
     assert.ok(service.includes('self.disconnect(task, message:'));
-    assert.ok(service.includes('guard self.servingPeers[remoteID] === peer'));
-    assert.ok(service.includes('guard self.fetchingPeers[remoteID] === peer'));
-    assert.match(service, /func retryConnection\(\) \{\s+stop\(\)\s+start\(\)/);
+    assert.ok(transfer.includes('self.peers[grant.id] === peer'));
+    assert.match(service, /func retryConnection\(\) \{\s*stop\(\);\s*start\(\)/);
     assert.ok(!view.includes('plaza.connectionError') && !view.includes('connectionTimeout'));
     assert.ok(!plist.includes('NSExceptionAllowsInsecureHTTPLoads'));
     assert.ok(service.includes('as? Bool ?? true'));
@@ -69,16 +114,34 @@ function verifySource() {
     assert.ok(view.includes('listener.region ?? "地区未知"'));
     assert.ok(view.includes('.id(listener.id)'));
     assert.ok(view.includes('action: { selectedFile = listener.file }'));
-    assert.ok(service.includes('sharedFiles[file.id] = track.fileURL'));
+    assert.ok(service.includes('self.transfers.publish(file, url: track.fileURL)'));
     const automaticShare = service.slice(service.indexOf('private func synchronizeAutomaticShare()'), service.indexOf('func download('));
     assert.ok(automaticShare.includes('shares.removeAll()'));
     assert.ok(!automaticShare.includes('removeItem') && !automaticShare.includes('copyItem'));
     assert.ok(view.includes('paused: listener.isOffline'));
-    assert.ok(view.includes('CandyAstronautScene') && view.includes('CandyProfileView'));
-    assert.ok(view.includes('Button("试听")') && view.includes('Button("下载")'));
+    assert.ok(view.includes('CandyProfileView'));
+    assert.ok(view.includes('Button("下载")') && view.includes('Button("取消", role: .cancel)'));
     assert.ok(view.includes('.truncationMode(.tail)'));
-    assert.ok(service.includes('AVAudioConverter') && service.includes('AVAudioPlayerNode'));
-    assert.ok(service.includes('queuedFrames + frames <= 24000 * 3'));
+    assert.doesNotMatch(service, /preview|AVAudioConverter|AVAudioPlayerNode|试听/i);
+    assert.doesNotMatch(view, /preview|试听/i);
+    assert.ok(transfer.includes('dataChannel(forLabel: "file-v2:\\(grant.id)"'));
+    assert.ok(transfer.includes('channel.label == "file-v2:\\(id)"'));
+    assert.ok(service.includes('try identitySecret()') && service.includes('SecItemAdd'));
+    assert.ok(transfer.includes('jobs.count < 2') && transfer.includes('uploads.count < 1'));
+    assert.ok(transfer.includes('incomingBytes + buffer.data.count <= 2_097_152'));
+    assert.ok(transfer.includes('try handle?.synchronize()'));
+    assert.ok(transfer.includes('digest() == file.sha256'));
+    assert.ok(transfer.includes('SHA256.hash') && transfer.includes('prefixHash'));
+    assert.ok(transfer.includes('forHTTPHeaderField: "Range"'));
+    assert.ok(transfer.includes('forHTTPHeaderField: "Content-Range"'));
+    assert.ok(transfer.includes('forHTTPHeaderField: "If-Match"'));
+    assert.ok(transfer.includes('type: "transfer-complete"'));
+    assert.ok(transfer.includes('type: "complete"'));
+    assert.ok(transfer.includes('case "transfer-revoked":'));
+    assert.ok(transfer.includes('func publish(') && !transfer.slice(transfer.indexOf('func publish('), transfer.indexOf('func withdraw(')).includes('closePeer'));
+    const project = fs.readFileSync(path.join(root, 'MusicPlayer.xcodeproj', 'project.pbxproj'), 'utf8');
+    assert.equal((project.match(/CandyReliableTransfer.swift in Sources/g) || []).length, 2);
+    assert.ok(view.includes('plaza.cancelDownload(download.id)') && view.includes('plaza.retryDownload(download.file)'));
     assert.ok(service.includes('now - $0 >= 60'));
     console.log('PASS: client source/config regression checks (not a Swift build).');
 }

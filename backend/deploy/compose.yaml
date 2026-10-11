@@ -1,0 +1,20 @@
+# Separate Linux TURN service. No backend or production instance is restarted by this file.
+services:
+  turn:
+    image: coturn/coturn:4.6.3
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      TURN_REST_SECRET: ${TURN_REST_SECRET:?Provide the shared secret through deployment secrets}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - exec turnserver -c /etc/coturn/music.conf --static-auth-secret "$$TURN_REST_SECRET"
+    volumes:
+      - ./coturn.conf:/etc/coturn/music.conf:ro
+      - ./tls:/etc/coturn/tls:ro
+      - turn-state:/var/lib/coturn
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+volumes:
+  turn-state:

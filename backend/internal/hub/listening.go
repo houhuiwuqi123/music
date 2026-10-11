@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/google/uuid"
 	"webtrc-signaling/internal/model"
 )
 
@@ -77,6 +78,11 @@ func (h *Hub) UpdateListening(client *Client, state *model.Listening, now time.T
 		return fmt.Errorf("client is no longer registered")
 	}
 	if state == nil {
+		h.mu.Lock()
+		h.revokeLocked(client.ID)
+		delete(h.leases, client.ID)
+		delete(h.current, client.ID)
+		h.mu.Unlock()
 		if previous, exists := h.listening[client.ID]; exists {
 			h.removeListeningFileLocked(previous.state)
 			delete(h.listening, client.ID)
@@ -118,11 +124,32 @@ func (h *Hub) UpdateListening(client *Client, state *model.Listening, now time.T
 			utf8.RuneCountInString(file.Name) > 300 || file.Size < 0 {
 			return fmt.Errorf("invalid listening file")
 		}
+		if file.SHA256 != "" && (!hashPattern.MatchString(file.SHA256) || file.ProtocolVersion != 2) {
+			return fmt.Errorf("invalid hash manifest")
+		}
+		if file.SHA256 != "" {
+			if _, err := uuid.Parse(file.ID); err != nil {
+				return fmt.Errorf("invalid publication UUID")
+			}
+		}
 		h.mu.RLock()
 		existing := h.files[file.ID]
+		changedManifest := existing != nil && existing.SHA256 != "" &&
+			(existing.SHA256 != file.SHA256 || existing.Size != file.Size)
+		if h.transfers != nil {
+			for _, g := range h.transfers.grants {
+				if g.file.ID == file.ID && (g.file.SHA256 != file.SHA256 || g.file.Size != file.Size) {
+					changedManifest = true
+					break
+				}
+			}
+		}
 		h.mu.RUnlock()
 		if existing != nil && existing.OwnerID != client.ID {
 			return fmt.Errorf("listening file belongs to another client")
+		}
+		if changedManifest {
+			return fmt.Errorf("publication manifest is immutable; use a new UUID")
 		}
 		value.File = &file
 	}
@@ -136,6 +163,15 @@ func (h *Hub) UpdateListening(client *Client, state *model.Listening, now time.T
 		h.mu.Unlock()
 	}
 	h.listening[client.ID] = listeningEntry{state: value, updated: now}
+	h.mu.Lock()
+	h.leases[client.ID] = now.Add(ListeningTTL)
+	if value.File == nil {
+		h.revokeLocked(client.ID)
+		delete(h.current, client.ID)
+	} else {
+		h.current[client.ID] = value.File.ID
+	}
+	h.mu.Unlock()
 	if !exists || !reflect.DeepEqual(previous.state, value) {
 		h.broadcastListeningLocked()
 		h.Broadcast(h.Snapshot())
@@ -155,6 +191,11 @@ func (h *Hub) ExpireListening(now time.Time) {
 			delete(h.listening, id)
 			changed = true
 		} else if now.Sub(entry.updated) >= ListeningTTL {
+			h.mu.Lock()
+			h.revokeLocked(id)
+			delete(h.leases, id)
+			delete(h.current, id)
+			h.mu.Unlock()
 			h.removeListeningFileLocked(entry.state)
 			timestamp := now.Unix()
 			entry.state.OfflineAt = &timestamp
@@ -178,6 +219,10 @@ func (h *Hub) DisconnectListening(client *Client, now time.Time) {
 		return
 	}
 	delete(h.clients, client.ID)
+	h.revokeLocked(client.ID)
+	delete(h.leases, client.ID)
+	delete(h.current, client.ID)
+	client.Close()
 	for id, file := range h.files {
 		if file.OwnerID == client.ID {
 			delete(h.files, id)

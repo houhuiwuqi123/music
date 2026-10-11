@@ -96,9 +96,9 @@ async function main() {
     b.send({ type: 'signal', to: c.id, data: JSON.stringify({ kind: 'candidate', candidate: {} }) });
     await c.wait(m => m.type === 'signal' && m.from === b.id);
     const streamStart = c.messages.length;
-    b.send({ type: 'signal', to: c.id, data: JSON.stringify({ kind: 'offer', sdp: { type: 'offer', sdp: 'preview-channel-test' } }) });
+    b.send({ type: 'signal', to: c.id, data: JSON.stringify({ kind: 'offer', sdp: { type: 'offer', sdp: 'file-channel-test' } }) });
     const signal = await c.wait(m => m.type === 'signal' && JSON.parse(m.data).kind === 'offer', streamStart);
-    assert.equal(JSON.parse(signal.data).sdp.sdp, 'preview-channel-test');
+    assert.equal(JSON.parse(signal.data).sdp.sdp, 'file-channel-test');
     start = c.messages.length;
     b.send({ type: 'unpublish', fileId: file.id });
     await c.wait(m => m.type === 'plaza' && !(m.files || []).some(f => f.id === file.id), start);

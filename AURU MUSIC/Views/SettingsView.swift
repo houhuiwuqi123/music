@@ -33,7 +33,7 @@ struct SettingsView: View {
                         get: { plaza.sharesListening },
                         set: { plaza.setSharesListening($0) }
                     ))
-                    Text("默认开启。其他在线用户可以试听或下载当前歌曲；关闭后停止公开和分享。仅分享你有权分享的音乐。")
+                    Text("默认开启。其他在线用户可以下载当前歌曲；关闭后停止公开和分享。仅分享你有权分享的音乐。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 

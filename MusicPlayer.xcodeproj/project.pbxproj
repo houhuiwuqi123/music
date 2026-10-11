@@ -26,6 +26,7 @@
 		A10000000000000000000013 /* CandyPlazaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* CandyPlazaService.swift */; };
 		A10000000000000000000014 /* CandyPlazaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* CandyPlazaView.swift */; };
 		A10000000000000000000015 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = X20000000000000000000002 /* WebRTC */; };
+		A10000000000000000000016 /* CandyReliableTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* CandyReliableTransfer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -50,6 +51,7 @@
 		B10000000000000000000015 /* AURU MUSIC.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "AURU MUSIC.entitlements"; sourceTree = "<group>"; };
 		B10000000000000000000016 /* CandyPlazaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CandyPlazaService.swift; sourceTree = "<group>"; };
 		B10000000000000000000017 /* CandyPlazaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CandyPlazaView.swift; sourceTree = "<group>"; };
+		B10000000000000000000018 /* CandyReliableTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CandyReliableTransfer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -103,6 +105,7 @@
 				B1000000000000000000000D /* MusicDataStore.swift */,
 				B1000000000000000000000E /* AppSettings.swift */,
 				B10000000000000000000016 /* CandyPlazaService.swift */,
+				B10000000000000000000018 /* CandyReliableTransfer.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -230,6 +233,7 @@
 				A10000000000000000000010 /* RootView.swift in Sources */,
 				A10000000000000000000012 /* SupportAndRecognitionViews.swift in Sources */,
 				A10000000000000000000013 /* CandyPlazaService.swift in Sources */,
+				A10000000000000000000016 /* CandyReliableTransfer.swift in Sources */,
 				A10000000000000000000014 /* CandyPlazaView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

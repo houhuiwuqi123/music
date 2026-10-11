@@ -4,7 +4,6 @@ import PhotosUI
 struct CandyPlazaView: View {
     @EnvironmentObject private var plaza: CandyPlazaService
     @EnvironmentObject private var settings: AppSettings
-    @EnvironmentObject private var player: MusicPlayerViewModel
     @State private var query = ""
     @State private var selectedFile: CandyPlazaFile?
     @State private var showsProfile = false
@@ -22,14 +21,10 @@ struct CandyPlazaView: View {
         ScrollView {
             VStack(spacing: 16) {
                 header
-                if plaza.previewFileID != nil {
-                    Button { plaza.stopPreview() } label: {
-                        Label("停止试听", systemImage: "stop.circle")
-                    }
-                }
                 searchBar
                 starField
                     .frame(height: 455)
+                transferTasks
                 receiveHistory
             }
             .padding(.horizontal, 16)
@@ -48,11 +43,6 @@ struct CandyPlazaView: View {
             titleVisibility: .visible
         ) {
             if let selectedFile {
-                Button("试听") {
-                    player.pause()
-                    plaza.preview(selectedFile)
-                    self.selectedFile = nil
-                }
                 Button("下载") {
                     plaza.download(selectedFile)
                     self.selectedFile = nil
@@ -121,18 +111,14 @@ struct CandyPlazaView: View {
     private var starField: some View {
         GeometryReader { geometry in
             ZStack {
-                RadialGradient(
-                    colors: [Color(red: 0.16, green: 0.10, blue: 0.34), Color(red: 0.035, green: 0.035, blue: 0.10), .black],
-                    center: .topLeading,
-                    startRadius: 8,
-                    endRadius: max(geometry.size.width, geometry.size.height) * 1.1
-                )
-                .overlay { CandyAmbientStars() }
+                Image(plaza.listeners.contains { !$0.isOffline } ? "PlazaOnline" : "PlazaEmpty")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottomTrailing)
+                    .clipped()
+                    .allowsHitTesting(false)
 
-                if visibleListeners.isEmpty {
-                    CandyAstronautScene()
-                        .allowsHitTesting(false)
-                } else {
+                if !visibleListeners.isEmpty {
                     ForEach(visibleListeners) { listener in
                         CandyFileStar(
                             listener: listener,
@@ -203,6 +189,35 @@ struct CandyPlazaView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
     }
 
+    private var transferTasks: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(plaza.downloads.values.sorted { $0.id < $1.id }) { download in
+                if !download.state.isComplete {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(download.file.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                        Text(download.status).font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            switch download.state {
+                            case .downloading:
+                                ProgressView(value: download.progress)
+                                Text("\(Int(download.progress * 100))%").font(.caption.monospacedDigit())
+                                Button("取消") { plaza.cancelDownload(download.id) }
+                            case .failed:
+                                Button("重试") { plaza.retryDownload(download.file) }
+                                Button("清除断点") { plaza.clearDownloadPartial(download.file) }
+                            case .complete:
+                                EmptyView()
+                            }
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                    .padding(12)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                }
+            }
+        }
+    }
+
     fileprivate static func stableHash(_ value: String) -> UInt32 {
         value.utf8.reduce(UInt32(2_166_136_261)) { ($0 ^ UInt32($1)) &* 16_777_619 }
     }
@@ -217,6 +232,7 @@ private struct CandyFileStar: View {
     let download: CandyPlazaDownload?
     let fieldSize: CGSize
     let action: () -> Void
+    @State private var flightStartedAt = Date()
     @State private var frozenDate: Date?
     @State private var successGlow = false
 
@@ -236,14 +252,14 @@ private struct CandyFileStar: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.04, paused: listener.isOffline)) { timeline in
             let date = listener.isOffline ? (frozenDate ?? timeline.date) : timeline.date
-            let time = date.timeIntervalSinceReferenceDate / 14 + Double(hash % 1000) / 1000
+            let time = max(0, date.timeIntervalSince(flightStartedAt) - Double(hash % 1000) / 1000 * 3) / 14
             let cycle = Int(time.rounded(.down))
             let progress = time - Double(cycle)
             let seed = hash &+ UInt32(truncatingIfNeeded: cycle) &* 2_654_435_761
-            let startX = 0.22 + Double(seed % 100) / 100 * 0.56
-            let endX = 0.18 + Double((seed >> 8) % 100) / 100 * 0.64
+            let startX = 0.86 + Double(seed % 100) / 100 * 0.10
+            let endX = 0.10 + Double((seed >> 8) % 100) / 100 * 0.12
             let x = startX + (endX - startX) * progress
-            let y = 0.86 - progress * 0.68
+            let y = 0.88 - progress * 0.73
             let scale = 1.15 - progress * 0.70
             Button(action: action) {
                 VStack(spacing: 5) {
@@ -252,8 +268,8 @@ private struct CandyFileStar: View {
                             Capsule()
                                 .fill(LinearGradient(colors: [.clear, .purple.opacity(0.55)], startPoint: .leading, endPoint: .trailing))
                                 .frame(width: 65, height: 2)
-                                .rotationEffect(.degrees(-40))
-                                .offset(x: -23, y: 23)
+                                .rotationEffect(.degrees(40))
+                                .offset(x: 23, y: 23)
                         }
                         if let encoded = listener.avatar, let data = Data(base64Encoded: encoded),
                            let image = UIImage(data: data) {
@@ -310,7 +326,14 @@ private struct CandyFileStar: View {
         }
         .onChange(of: listener.file?.id) { _ in successGlow = false }
         .onChange(of: listener.isOffline) { offline in
-            frozenDate = offline ? Date() : nil
+            if offline {
+                frozenDate = Date()
+            } else {
+                if let frozenDate {
+                    flightStartedAt = flightStartedAt.addingTimeInterval(Date().timeIntervalSince(frozenDate))
+                }
+                frozenDate = nil
+            }
         }
     }
 
@@ -327,57 +350,6 @@ private extension CandyPlazaDownload.State {
     var isComplete: Bool {
         if case .complete = self { return true }
         return false
-    }
-}
-
-private struct CandyAmbientStars: View {
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 0.12, paused: false)) { timeline in
-            Canvas { context, size in
-                let time = timeline.date.timeIntervalSinceReferenceDate
-                for index in 0..<90 {
-                    let seed = UInt32(index + 1) &* 2_654_435_761
-                    let x = CGFloat(seed % 10_000) / 10_000 * size.width
-                    let y = CGFloat((seed >> 8) % 10_000) / 10_000 * size.height
-                    let phase = Double(seed % 31) / 5
-                    let opacity = 0.15 + (sin(time * (0.5 + Double(index % 5) * 0.13) + phase) + 1) * 0.22
-                    let rect = CGRect(x: x, y: y, width: 1.4, height: 1.4)
-                    context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(opacity)))
-                }
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-private struct CandyAstronautScene: View {
-    var body: some View {
-        Canvas { context, size in
-            let center = CGPoint(x: size.width * 0.5, y: size.height * 0.76)
-            let radius = min(size.width * 0.35, 135)
-            var planet = Path()
-            planet.addArc(center: center, radius: radius, startAngle: .degrees(180), endAngle: .degrees(360), clockwise: false)
-            planet.closeSubpath()
-            context.fill(planet, with: .color(.white.opacity(0.08)))
-            context.stroke(planet, with: .color(.white.opacity(0.65)), lineWidth: 1.5)
-            let helmet = CGRect(x: center.x - 30, y: center.y - radius - 66, width: 42, height: 42)
-            context.fill(Path(ellipseIn: helmet), with: .color(.white.opacity(0.82)))
-            context.fill(Path(ellipseIn: helmet.insetBy(dx: 6, dy: 10).offsetBy(dx: 3, dy: -1)), with: .color(.indigo.opacity(0.9)))
-            let body = CGRect(x: center.x - 25, y: helmet.maxY - 2, width: 34, height: 32)
-            context.fill(Path(roundedRect: body, cornerRadius: 10), with: .color(.white.opacity(0.75)))
-            var limbs = Path()
-            limbs.move(to: CGPoint(x: body.midX, y: body.maxY - 6))
-            limbs.addLine(to: CGPoint(x: body.maxX + 20, y: body.maxY + 4))
-            limbs.addLine(to: CGPoint(x: body.maxX + 26, y: body.maxY + 20))
-            limbs.move(to: CGPoint(x: body.minX + 5, y: body.minY + 8))
-            limbs.addLine(to: CGPoint(x: body.minX - 9, y: body.maxY + 5))
-            context.stroke(limbs, with: .color(.white.opacity(0.8)), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
-            for index in 0..<7 {
-                let x = center.x - radius + CGFloat(index) * radius / 3
-                let y = center.y - 15 - CGFloat(index % 3) * 14
-                context.stroke(Path(ellipseIn: CGRect(x: x, y: y, width: 14, height: 5)), with: .color(.white.opacity(0.15)), lineWidth: 1)
-            }
-        }
     }
 }
 
