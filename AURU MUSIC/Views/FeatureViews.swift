@@ -921,7 +921,7 @@ struct PlaylistsView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
-            guard notification.object as? Int == 3 else { return }
+            guard notification.object as? Int == 4 else { return }
             navigationPath.removeAll()
             scrollResetToken += 1
         }

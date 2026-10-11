@@ -7,6 +7,7 @@ struct MusicPlayerApp: App {
     @StateObject private var player = MusicPlayerViewModel()
     @StateObject private var dataStore = MusicDataStore()
     @StateObject private var settings = AppSettings()
+    @StateObject private var plaza = CandyPlazaService()
 
     init() {
         let appearance = UITabBarAppearance()
@@ -24,6 +25,7 @@ struct MusicPlayerApp: App {
                 .environmentObject(player)
                 .environmentObject(dataStore)
                 .environmentObject(settings)
+                .environmentObject(plaza)
                 .preferredColorScheme(.dark)
         }
     }

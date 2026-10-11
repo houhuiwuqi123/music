@@ -32,6 +32,7 @@ final class AppSettings: ObservableObject {
     func text(_ key: String) -> String {
         let translations: [String: (zh: String, en: String)] = [
             "home": ("首页", "Home"), "songs": ("音乐库", "Songs"), "artists": ("艺人", "Artists"),
+            "plaza": ("广场", "Plaza"),
             "playlists": ("歌单", "Playlists"), "search": ("搜索歌曲、艺人、歌单", "Search songs, artists, playlists"),
             "recent": ("最近播放", "Recently Played"), "top": ("播放排行", "Top Played"),
             "allSongs": ("全部歌曲", "All Songs"), "settings": ("设置", "Settings"),

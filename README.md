@@ -12,6 +12,7 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 - Provides Home, Songs, Artists, and Playlists tabs with global search.
 - Tracks recent plays when playback starts; increments song/video play counts only when AVPlayer reaches the end. Skipping, pausing, or switching media does not increment counts. Each completed repeat counts once.
 - Supports persistent playlists; a song can belong to multiple playlists.
+- Adds Candy广场 after Artists: an animated, searchable starfield of live shares; import and withdraw files; receive files peer-to-peer over WebRTC; and keep local publish/receive histories.
 - The mini-player and song-row playlist selector stays open for multiple selections. Tap an already selected playlist to remove the song; tap Done or dismiss the sheet to close it. Song details use the same membership toggle.
 - Supports custom covers for songs and playlists through the native Files importer.
 - Provides song details with metadata, playlist assignment, and permanent local deletion.
@@ -41,7 +42,7 @@ A modern, local-first music player built with SwiftUI and AVFoundation for iOS 1
 5. Choose an iPhone simulator or connected iPhone and press **Run**.
 6. Tap the import button and choose audio files from the Files picker.
 
-The deployment target is iOS 16.0. No third-party packages are required.
+The deployment target is iOS 16.0. The Xcode project resolves the WebRTC binary Swift Package when first opened/built. Candy广场 connects to `ws://webtrc.com/ws` and uses Google STUN for WebRTC; its HTTP ATS exception is limited to `webtrc.com`.
 
 ## How local files are recognized
 
@@ -78,6 +79,10 @@ For lyrics, select `Song.mp3` and `Song.lrc` together, or import `Song.lrc` afte
 ## Notes
 
 The repository is generated on Windows, where Xcode and the iOS SDK are unavailable. Build and signing must be performed on macOS. Add an AppIcon asset in Xcode before App Store distribution.
+
+### Candy广场
+
+The new navigation tab implements the `SWIFT_PORT_PROMPT.md` protocol against the existing webtrc.com signaling service. Client IDs are regenerated per connection, while the visitor nickname and the last 100 publish/receive records are stored locally. Published files are copied to `Documents/Candy Shares` and are available only while the app is connected; received files are written to `Documents/Candy Downloads` and can be shared from the receive history. File bytes travel over WebRTC data channels, not through the signaling service. The service uses plaintext WebSocket as specified by the existing endpoint and a host-scoped App Transport Security exception. WebRTC uses STUN only; restrictive NATs may prevent a direct connection.
 
 ### Regression checks on iOS
 

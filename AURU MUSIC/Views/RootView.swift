@@ -4,14 +4,15 @@ import UniformTypeIdentifiers
 
 struct RootView: View {
     enum Tab: Hashable {
-        case home, songs, artists, playlists
+        case home, songs, artists, plaza, playlists
 
         var index: Int {
             switch self {
             case .home: return 0
             case .songs: return 1
             case .artists: return 2
-            case .playlists: return 3
+            case .plaza: return 3
+            case .playlists: return 4
             }
         }
     }
@@ -43,6 +44,7 @@ struct RootView: View {
                     HomeView().tag(Tab.home).tabItem { Label(settings.text("home"), systemImage: "house.fill") }
                     SongsView().tag(Tab.songs).tabItem { Label(settings.text("songs"), systemImage: "music.note.list") }
                     ArtistsView().tag(Tab.artists).tabItem { Label(settings.text("artists"), systemImage: "person.2.fill") }
+                    CandyPlazaView().tag(Tab.plaza).tabItem { Label(settings.text("plaza"), systemImage: "sparkles") }
                     PlaylistsView().tag(Tab.playlists).tabItem { Label(settings.text("playlists"), systemImage: "rectangle.stack.fill") }
                 }
                 .tint(.purple)
@@ -237,6 +239,7 @@ struct RootView: View {
         case .home: return settings.text("home")
         case .songs: return settings.text("songs")
         case .artists: return settings.text("artists")
+        case .plaza: return settings.text("plaza")
         case .playlists: return settings.text("playlists")
         }
     }
