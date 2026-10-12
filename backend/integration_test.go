@@ -121,7 +121,7 @@ func TestWebSocketGatewayEndToEnd(t *testing.T) {
 		receiveType(t, conn, "listeners")
 		return conn
 	}
-	ownerSecret := uuid.NewString()
+	ownerSecret := uuid.NewString() + uuid.NewString()
 	owner := dial("source", ownerSecret)
 	_, response, err := websocket.DefaultDialer.Dial(wsBase+"?id=source&secret="+uuid.NewString(), nil)
 	if err == nil || response == nil || response.StatusCode != 403 {
@@ -156,9 +156,14 @@ func TestWebSocketGatewayEndToEnd(t *testing.T) {
 	if grants[0].Mode != "p2p" || grants[1].Mode != "p2p" || grants[2].Mode != "relay" {
 		t.Fatal("admission modes")
 	}
-	authorized := receiveType(t,owner,"transfer-authorized")
+	authorized := receiveType(t, owner, "transfer-authorized")
 	if authorized.From != "receiver-0" || authorized.Transfer == nil || authorized.Transfer.ID != grants[0].ID ||
-		authorized.Transfer.Token != "" || authorized.Transfer.Generation != 1 { t.Fatal("owner authorization missing or leaked receiver bearer") }
+		authorized.Transfer.Token != "" || authorized.Transfer.Generation != 1 {
+		t.Fatal("owner authorization missing or leaked receiver bearer")
+	}
+	if second := receiveType(t, owner, "transfer-authorized"); second.Transfer == nil || second.Transfer.ID != grants[1].ID {
+		t.Fatal("second P2P owner authorization missing")
+	}
 	upload := receiveType(t, owner, "upload-request").Transfer
 	if upload == nil || upload.Token == grants[2].Token || !strings.HasPrefix(upload.UploadURL, "https://gateway.test/v2/uploads/") {
 		t.Fatal("upload authorization")
@@ -221,6 +226,50 @@ func TestWebSocketGatewayEndToEnd(t *testing.T) {
 	_ = recipients[0].WriteJSON(model.WSMessage{Type: "signal", To: "source", TransferID: grants[0].ID, Generation: 2, Data: envelopeData})
 	if receiveType(t, recipients[0], "transfer-error").Error != "invalid-signal" {
 		t.Fatal("wrong generation accepted")
+	}
+	_ = recipients[0].WriteJSON(model.WSMessage{Type: "transfer-request", RequestID: uuid.NewString(), TransferID: grants[0].ID, FileID: f.ID, To: "source"})
+	resumed := receiveType(t, recipients[0], "transfer").Transfer
+	if resumed == nil || resumed.Generation != 2 {
+		t.Fatal("P2P resume generation")
+	}
+	authorization := receiveType(t, owner, "transfer-authorized")
+	if authorization.Transfer == nil || authorization.Transfer.ID != grants[0].ID || authorization.Transfer.Generation != 2 ||
+		authorization.From != "receiver-0" {
+		t.Fatal("resume authorization not resent")
+	}
+	_ = recipients[0].WriteJSON(model.WSMessage{Type: "transfer-request", RequestID: uuid.NewString(), TransferID: grants[0].ID, FileID: f.ID, To: "source", Mode: "relay"})
+	upgraded := receiveType(t, recipients[0], "transfer").Transfer
+	if upgraded == nil || upgraded.Mode != "relay" || upgraded.Status != "ready" ||
+		upgraded.ID != grants[0].ID || upgraded.Token != grants[0].Token {
+		t.Fatal("wire relay fallback lost grant identity")
+	}
+	if revoked := receiveType(t, owner, "transfer-revoked"); revoked.TransferID != grants[0].ID || revoked.Error != "relay-upgrade" {
+		t.Fatal("owner direct channel not stopped at fallback")
+	}
+	response, body = httpCall("GET", strings.TrimPrefix(upgraded.DownloadURL, "https://gateway.test"), upgraded.Token, "", nil)
+	if response.StatusCode != 200 || !bytes.Equal(body, data) {
+		t.Fatal("upgraded grant cannot download deduplicated content")
+	}
+	_ = recipients[1].WriteJSON(model.WSMessage{Type: "transfer-complete", TransferID: grants[1].ID})
+	if completed := receiveType(t, owner, "transfer-completed"); completed.TransferID != grants[1].ID {
+		t.Fatal("owner completion notification missing")
+	}
+	_ = recipients[1].WriteJSON(model.WSMessage{Type: "transfer-complete", TransferID: grants[1].ID})
+	_ = owner.WriteJSON(model.WSMessage{Type: "share-retire", FileID: f.ID})
+	retired := receiveType(t, owner, "listeners")
+	for _, listener := range retired.Listeners {
+		if listener.ClientID == "source" && listener.File != nil {
+			t.Fatal("retired old share advertised")
+		}
+	}
+	receiveType(t, owner, "plaza")
+	response, body = httpCall("GET", downloadPath, grants[2].Token, "", nil)
+	if response.StatusCode != 200 || !bytes.Equal(body, data) {
+		t.Fatal("retire interrupted existing gateway grant")
+	}
+	_ = recipients[2].WriteJSON(model.WSMessage{Type: "transfer-request", RequestID: uuid.NewString(), FileID: f.ID, To: "source"})
+	if receiveType(t, recipients[2], "transfer-error").Error != "not-available" {
+		t.Fatal("retired old song admission allowed")
 	}
 	next := f
 	next.ID = uuid.NewString()

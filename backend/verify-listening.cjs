@@ -93,16 +93,20 @@ async function main() {
     const file = { id: randomUUID(), name: 'test.txt', size: 4, ownerName: 'Test visitor' };
     b.send({ type: 'publish', file });
     await c.wait(m => m.type === 'plaza' && m.files?.some(f => f.id === file.id));
+    const signalStart = c.messages.length;
+    let rejectedSignalStart = b.messages.length;
     b.send({ type: 'signal', to: c.id, data: JSON.stringify({ kind: 'candidate', candidate: {} }) });
-    await c.wait(m => m.type === 'signal' && m.from === b.id);
-    const streamStart = c.messages.length;
+    await b.wait(m => m.type === 'transfer-error' && m.error === 'invalid-signal', rejectedSignalStart);
+    rejectedSignalStart = b.messages.length;
     b.send({ type: 'signal', to: c.id, data: JSON.stringify({ kind: 'offer', sdp: { type: 'offer', sdp: 'file-channel-test' } }) });
-    const signal = await c.wait(m => m.type === 'signal' && JSON.parse(m.data).kind === 'offer', streamStart);
-    assert.equal(JSON.parse(signal.data).sdp.sdp, 'file-channel-test');
+    await b.wait(m => m.type === 'transfer-error' && m.error === 'invalid-signal', rejectedSignalStart);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.ok(!c.messages.slice(signalStart).some(m => m.type === 'signal' && m.from === b.id),
+        'Unauthorized recipient received an unscoped signal');
     start = c.messages.length;
     b.send({ type: 'unpublish', fileId: file.id });
     await c.wait(m => m.type === 'plaza' && !(m.files || []).some(f => f.id === file.id), start);
-    console.log('PASS: existing publish, signal relay and unpublish preserved');
+    console.log('PASS: publish/unpublish preserved; unscoped signals rejected without recipient forwarding');
 }
 
 function finish(exitCode) {

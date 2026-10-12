@@ -64,7 +64,7 @@ func (h *Hub) serveGateway(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) uploadAuthorizedLocked(v *relayContent, now time.Time) bool {
 	c := h.clients[v.owner]
 	if v.failed || v.ctx.Err() != nil || v.refs <= 0 || !v.scheduled || c == nil || !c.Verified ||
-		!now.Before(h.leases[v.owner]) {
+		!now.Before(h.leases[v.owner]) || !now.Before(v.expires) {
 		return false
 	}
 	for _, g := range h.transfers.grants {
@@ -267,8 +267,17 @@ func (h *Hub) upload(w http.ResponseWriter, r *http.Request, id string) {
 func (h *Hub) failContent(v *relayContent, reason string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.failContentLocked(v, reason)
+}
+
+func (h *Hub) failContentLocked(v *relayContent, reason string) {
 	v.failed = true
 	v.cancel()
+	if v.scheduled {
+		if owner := h.clients[v.owner]; owner != nil {
+			_ = owner.Send(&model.WSMessage{Type: "transfer-revoked", TransferID: v.id, Error: reason})
+		}
+	}
 	for _, g := range h.transfers.grants {
 		if g.content == v {
 			if c := h.clients[g.recipient]; c != nil {
@@ -380,7 +389,9 @@ func (h *Hub) download(w http.ResponseWriter, r *http.Request, id, action string
 	}
 	if action == "complete" {
 		// Keep a canceled, bounded tombstone so bearer retries are idempotent until expiry.
-		h.notifyRevokedLocked(g,"released")
+		if owner := h.clients[g.owner]; owner != nil {
+			_ = owner.Send(&model.WSMessage{Type: "transfer-completed", TransferID: g.id})
+		}
 		g.cancel()
 		g.completed = true
 		if g.content != nil {
@@ -388,6 +399,11 @@ func (h *Hub) download(w http.ResponseWriter, r *http.Request, id, action string
 			if g.content.refs == 0 {
 				g.content.idle = time.Now()
 				if !g.content.ready {
+					if g.content.scheduled && !g.content.failed {
+						if owner := h.clients[g.owner]; owner != nil {
+							_ = owner.Send(&model.WSMessage{Type: "transfer-revoked", TransferID: g.content.id, Error: "released"})
+						}
+					}
 					g.content.failed = true
 					g.content.cancel()
 					g.content.idle = time.Now().Add(-h.transfers.config.IdleTTL)
@@ -417,6 +433,19 @@ func (h *Hub) download(w http.ResponseWriter, r *http.Request, id, action string
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Type", "application/octet-stream")
+	if condition := r.Header.Get("If-Match"); condition != "" && condition != "*" {
+		matched := false
+		for _, candidate := range strings.Split(condition, ",") {
+			if strings.TrimSpace(candidate) == etag {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			http.Error(w, "etag-mismatch", http.StatusPreconditionFailed)
+			return
+		}
+	}
 	rangeHeader := r.Header.Get("Range")
 	if value := r.Header.Get("If-Range"); value != "" && value != etag {
 		rangeHeader = ""

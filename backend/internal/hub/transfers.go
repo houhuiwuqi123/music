@@ -42,8 +42,8 @@ type TransferConfig struct {
 }
 
 func DefaultTransferConfig(dir, publicURL string) TransferConfig {
-	return TransferConfig{CacheDir: dir, PublicURL: publicURL, MaxFileSize: 512 << 20,
-		MaxCacheBytes: 4 << 30, MaxOwnerBytes: 1 << 30, MaxGrants: 2048, MaxOwnerGrants: 256,
+	return TransferConfig{CacheDir: dir, PublicURL: publicURL, MaxFileSize: 2 << 30,
+		MaxCacheBytes: 4 << 30, MaxOwnerBytes: 2 << 30, MaxGrants: 2048, MaxOwnerGrants: 256,
 		MaxRecipientGrants: 4, MaxContents: 64, MaxPendingUploads: 50, MaxStreams: 128,
 		BytesPerSecond: 64 << 20, GrantTTL: 30 * time.Minute, IdleTTL: 10 * time.Minute}
 }
@@ -69,6 +69,8 @@ type relayContent struct {
 	refs                         int
 	idle                         time.Time
 	created                      time.Time
+	expires                      time.Time
+	lastNotified                 time.Time
 	file                         model.FileMeta
 	httpRate                     requestRate
 	ctx                          context.Context
@@ -172,7 +174,12 @@ func (h *Hub) RequestTransfer(c *Client, msg *model.WSMessage, now time.Time) (*
 	if _, err := uuid.Parse(msg.RequestID); err != nil {
 		return nil, errors.New("invalid-request-id")
 	}
-	if msg.Mode != "" && msg.Mode != "relay" && msg.Mode != "p2p" { return nil,errors.New("invalid-mode") }
+	if expiry := h.canceledRequests[c.ID][msg.RequestID]; now.Before(expiry) {
+		return nil, errors.New("request-canceled")
+	}
+	if msg.Mode != "" && msg.Mode != "relay" && msg.Mode != "p2p" {
+		return nil, errors.New("invalid-mode")
+	}
 	if msg.TransferID != "" {
 		g := s.grants[msg.TransferID]
 		if g == nil || g.recipient != c.ID || g.owner != msg.To || g.file.ID != msg.FileID ||
@@ -184,7 +191,9 @@ func (h *Hub) RequestTransfer(c *Client, msg *model.WSMessage, now time.Time) (*
 				return nil, errors.New("resume-limit")
 			}
 			if msg.Mode == "relay" && g.mode == "p2p" {
-				if err := h.attachRelayLocked(g,now); err != nil { return nil,err }
+				if err := h.attachRelayLocked(g, now); err != nil {
+					return nil, err
+				}
 			}
 			g.requests[msg.RequestID] = true
 			if g.mode == "p2p" {
@@ -192,12 +201,20 @@ func (h *Hub) RequestTransfer(c *Client, msg *model.WSMessage, now time.Time) (*
 			}
 		}
 		if msg.Mode == "relay" && g.mode == "p2p" {
-			if g.content == nil { if err := h.attachRelayLocked(g,now); err != nil { return nil,err } }
-			if owner := h.clients[g.owner]; owner != nil { _ = owner.Send(&model.WSMessage{Type:"transfer-revoked",TransferID:g.id,Error:"relay-upgrade"}) }
+			if g.content == nil {
+				if err := h.attachRelayLocked(g, now); err != nil {
+					return nil, err
+				}
+			}
+			if owner := h.clients[g.owner]; owner != nil {
+				_ = owner.Send(&model.WSMessage{Type: "transfer-revoked", TransferID: g.id, Error: "relay-upgrade"})
+			}
 			g.mode = "relay"
-			h.scheduleLocked(g.owner,now)
+			h.scheduleLocked(g.owner, now)
 		}
 		g.requestID = msg.RequestID
+		g.expires = now.Add(s.config.GrantTTL)
+		h.retryUploadLocked(g, now)
 		h.authorizeP2PLocked(g)
 		return h.transferLocked(g), nil
 	}
@@ -210,11 +227,17 @@ func (h *Hub) RequestTransfer(c *Client, msg *model.WSMessage, now time.Time) (*
 				return nil, errors.New("invalid-or-revoked-transfer")
 			}
 			if msg.Mode == "relay" && g.mode == "p2p" {
-				if err := h.attachRelayLocked(g,now); err != nil { return nil,err }
-				if owner := h.clients[g.owner]; owner != nil { _ = owner.Send(&model.WSMessage{Type:"transfer-revoked",TransferID:g.id,Error:"relay-upgrade"}) }
+				if err := h.attachRelayLocked(g, now); err != nil {
+					return nil, err
+				}
+				if owner := h.clients[g.owner]; owner != nil {
+					_ = owner.Send(&model.WSMessage{Type: "transfer-revoked", TransferID: g.id, Error: "relay-upgrade"})
+				}
 				g.mode = "relay"
-				h.scheduleLocked(g.owner,now)
+				h.scheduleLocked(g.owner, now)
 			}
+			g.expires = now.Add(s.config.GrantTTL)
+			h.retryUploadLocked(g, now)
 			h.authorizeP2PLocked(g)
 			return h.transferLocked(g), nil
 		}
@@ -256,7 +279,9 @@ func (h *Hub) RequestTransfer(c *Client, msg *model.WSMessage, now time.Time) (*
 	g.requests = map[string]bool{msg.RequestID: true}
 	if p2p >= 2 || msg.Mode == "relay" {
 		g.mode = "relay"
-		if err := h.attachRelayLocked(g,now); err != nil { return nil,err }
+		if err := h.attachRelayLocked(g, now); err != nil {
+			return nil, err
+		}
 	}
 	g.ctx, g.cancel = context.WithCancel(context.Background())
 	s.grants[g.id] = g
@@ -265,28 +290,49 @@ func (h *Hub) RequestTransfer(c *Client, msg *model.WSMessage, now time.Time) (*
 	return h.transferLocked(g), nil
 }
 
-func (h *Hub) attachRelayLocked(g *grant,now time.Time) error {
+func (h *Hub) retryUploadLocked(g *grant, now time.Time) {
+	v := g.content
+	if v == nil || v.ready || v.failed || !v.scheduled || now.Sub(v.lastNotified) < 15*time.Second {
+		return
+	}
+	if owner := h.clients[v.owner]; owner != nil {
+		v.lastNotified = now
+		v.expires = now.Add(2 * time.Hour)
+		_ = owner.Send(&model.WSMessage{Type: "upload-request", Transfer: &model.Transfer{ID: v.id, File: v.file, Mode: "relay", Token: v.token,
+			UploadURL: h.transfers.config.PublicURL + "/v2/uploads/" + v.id, ExpiresAt: v.expires.Unix()}})
+	}
+}
+
+func (h *Hub) attachRelayLocked(g *grant, now time.Time) error {
 	s := h.transfers
 	f := g.file
-	key := fmt.Sprintf("%s:%s:%d",g.owner,f.SHA256,f.Size)
+	key := fmt.Sprintf("%s:%s:%d", g.owner, f.SHA256, f.Size)
 	content := s.contents[key]
-	if content != nil && content.failed { return errors.New("busy") }
+	if content != nil && content.failed {
+		return errors.New("busy")
+	}
 	if content == nil {
 		var ownerBytes int64
 		pending := 0
-		for _,v := range s.contents {
+		for _, v := range s.contents {
 			if v.owner == g.owner {
 				ownerBytes += v.size
-				if !v.ready && !v.failed { pending++ }
+				if !v.ready && !v.failed {
+					pending++
+				}
 			}
 		}
 		if len(s.contents) >= s.config.MaxContents || f.Size > s.config.MaxCacheBytes-s.reserved ||
-			f.Size > s.config.MaxOwnerBytes-ownerBytes { return errors.New("cache-full") }
-		if pending >= s.config.MaxPendingUploads { return errors.New("busy") }
-		ctx,cancel := context.WithCancel(context.Background())
+			f.Size > s.config.MaxOwnerBytes-ownerBytes {
+			return errors.New("cache-full")
+		}
+		if pending >= s.config.MaxPendingUploads {
+			return errors.New("busy")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
 		id := uuid.NewString()
-		content = &relayContent{id:id,owner:g.owner,hash:f.SHA256,size:f.Size,token:opaqueToken(),
-			path:filepath.Join(s.config.CacheDir,"relay-"+id+".part"),file:f,ctx:ctx,cancel:cancel,created:now}
+		content = &relayContent{id: id, owner: g.owner, hash: f.SHA256, size: f.Size, token: opaqueToken(),
+			path: filepath.Join(s.config.CacheDir, "relay-"+id+".part"), file: f, ctx: ctx, cancel: cancel, created: now}
 		s.contents[key] = content
 		s.reserved += f.Size
 	}
@@ -297,17 +343,19 @@ func (h *Hub) attachRelayLocked(g *grant,now time.Time) error {
 }
 
 func (h *Hub) authorizeP2PLocked(g *grant) {
-	if g.mode != "p2p" { return }
+	if g.mode != "p2p" {
+		return
+	}
 	if owner := h.clients[g.owner]; owner != nil {
-		_ = owner.Send(&model.WSMessage{Type:"transfer-authorized",From:g.recipient,
-			Transfer:&model.Transfer{ID:g.id,File:g.file,Mode:"p2p",Token:"",ExpiresAt:g.expires.Unix(),Generation:g.generation}})
+		_ = owner.Send(&model.WSMessage{Type: "transfer-authorized", From: g.recipient,
+			Transfer: &model.Transfer{ID: g.id, File: g.file, Mode: "p2p", Token: "", ExpiresAt: g.expires.Unix(), Generation: g.generation}})
 	}
 }
 
-func (h *Hub) notifyRevokedLocked(g *grant,reason string) {
-	for _,peer := range []string{g.owner,g.recipient} {
+func (h *Hub) notifyRevokedLocked(g *grant, reason string) {
+	for _, peer := range []string{g.owner, g.recipient} {
 		if c := h.clients[peer]; c != nil {
-			_ = c.Send(&model.WSMessage{Type:"transfer-revoked",TransferID:g.id,Error:reason})
+			_ = c.Send(&model.WSMessage{Type: "transfer-revoked", TransferID: g.id, Error: reason})
 		}
 	}
 }
@@ -351,9 +399,11 @@ func (h *Hub) scheduleLocked(owner string, now time.Time) {
 			return
 		}
 		selected.scheduled = true
+		selected.expires = now.Add(2 * time.Hour)
+		selected.lastNotified = now
 		_ = client.Send(&model.WSMessage{Type: "upload-request", Transfer: &model.Transfer{ID: selected.id, File: selected.file,
 			Mode: "relay", Token: selected.token, UploadURL: s.config.PublicURL + "/v2/uploads/" + selected.id,
-			ExpiresAt: now.Add(s.config.GrantTTL).Unix()}})
+			ExpiresAt: selected.expires.Unix()}})
 	}
 }
 
@@ -365,6 +415,11 @@ func (h *Hub) releaseLocked(g *grant, now time.Time) {
 		if v.refs == 0 {
 			v.idle = now
 			if !v.ready {
+				if v.scheduled && !v.failed {
+					if owner := h.clients[v.owner]; owner != nil {
+						_ = owner.Send(&model.WSMessage{Type: "transfer-revoked", TransferID: v.id, Error: "released"})
+					}
+				}
 				v.failed = true
 				v.cancel()
 				v.idle = now.Add(-h.transfers.config.IdleTTL)
@@ -375,6 +430,95 @@ func (h *Hub) releaseLocked(g *grant, now time.Time) {
 }
 
 func (h *Hub) ReleaseTransfer(c *Client, id string) error {
+	return h.finishTransfer(c, id, false)
+}
+
+func (h *Hub) CancelTransfer(c *Client, requestID, id string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.clients[c.ID] != c {
+		return errors.New("client is no longer registered")
+	}
+	if requestID != "" {
+		if _, err := uuid.Parse(requestID); err != nil {
+			return errors.New("invalid-request-id")
+		}
+		now := time.Now()
+		requests := h.canceledRequests[c.ID]
+		total := 0
+		for _, entries := range h.canceledRequests {
+			total += len(entries)
+		}
+		if total >= 8192 && requests[requestID].IsZero() {
+			return errors.New("cancel-limit")
+		}
+		if requests == nil {
+			requests = map[string]time.Time{}
+			h.canceledRequests[c.ID] = requests
+		}
+		for key, expiry := range requests {
+			if !now.Before(expiry) {
+				delete(requests, key)
+			}
+		}
+		if len(requests) >= 256 && requests[requestID].IsZero() {
+			return errors.New("cancel-limit")
+		}
+		requests[requestID] = now.Add(5 * time.Minute)
+	}
+	if h.transfers == nil {
+		return nil
+	}
+	g := h.transfers.grants[id]
+	if g == nil && requestID != "" {
+		for _, candidate := range h.transfers.grants {
+			if candidate.recipient == c.ID && candidate.requests[requestID] {
+				g = candidate
+				break
+			}
+		}
+	}
+	if g == nil {
+		return nil
+	}
+	if g.recipient != c.ID {
+		return errors.New("not-your-transfer")
+	}
+	h.notifyRevokedLocked(g, "released")
+	h.releaseLocked(g, time.Now())
+	return nil
+}
+
+func (h *Hub) UploadError(c *Client, id string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.clients[c.ID] != c || !c.Verified {
+		return errors.New("identity-required")
+	}
+	if h.transfers == nil {
+		return errors.New("gateway-disabled")
+	}
+	for _, v := range h.transfers.contents {
+		if v.id != id {
+			continue
+		}
+		if v.owner != c.ID || !v.scheduled {
+			return errors.New("not-your-upload")
+		}
+		if v.ready || v.failed {
+			return nil
+		}
+		h.failContentLocked(v, "upload-failed")
+		return nil
+	}
+	return errors.New("invalid-upload")
+}
+
+func (h *Hub) CompleteTransfer(c *Client, id string) error {
+	return h.finishTransfer(c, id, true)
+}
+
+func (h *Hub) finishTransfer(c *Client, id string, completed bool) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.clients[c.ID] != c {
@@ -390,7 +534,13 @@ func (h *Hub) ReleaseTransfer(c *Client, id string) error {
 	if g.recipient != c.ID {
 		return errors.New("not-your-transfer")
 	}
-	h.notifyRevokedLocked(g,"released")
+	if completed {
+		if owner := h.clients[g.owner]; owner != nil {
+			_ = owner.Send(&model.WSMessage{Type: "transfer-completed", TransferID: g.id})
+		}
+	} else {
+		h.notifyRevokedLocked(g, "released")
+	}
 	h.releaseLocked(g, time.Now())
 	return nil
 }
@@ -402,6 +552,11 @@ func (h *Hub) revokeLocked(id string) {
 	now := time.Now()
 	for _, v := range h.transfers.contents {
 		if v.owner == id {
+			if v.scheduled && !v.ready && !v.failed {
+				if owner := h.clients[v.owner]; owner != nil {
+					_ = owner.Send(&model.WSMessage{Type: "transfer-revoked", TransferID: v.id, Error: "revoked"})
+				}
+			}
 			v.failed = true
 			v.cancel()
 			v.idle = now.Add(-h.transfers.config.IdleTTL)
@@ -409,7 +564,7 @@ func (h *Hub) revokeLocked(id string) {
 	}
 	for _, g := range h.transfers.grants {
 		if g.owner == id || g.recipient == id {
-			h.notifyRevokedLocked(g,"revoked")
+			h.notifyRevokedLocked(g, "revoked")
 			h.releaseLocked(g, now)
 		}
 	}
@@ -428,13 +583,33 @@ func (h *Hub) SweepTransfers(now time.Time) {
 		return
 	}
 	s := h.transfers
+	for owner, requests := range h.canceledRequests {
+		for id, expiry := range requests {
+			if !now.Before(expiry) {
+				delete(requests, id)
+			}
+		}
+		if len(requests) == 0 {
+			delete(h.canceledRequests, owner)
+		}
+	}
+	for _, v := range s.contents {
+		if v.scheduled && !v.ready && !v.failed && v.refs > 0 && v.expires.Sub(now) < time.Minute &&
+			now.Before(h.leases[v.owner]) {
+			if owner := h.clients[v.owner]; owner != nil {
+				v.expires = now.Add(2 * time.Hour)
+				_ = owner.Send(&model.WSMessage{Type: "upload-request", Transfer: &model.Transfer{ID: v.id, File: v.file,
+					Mode: "relay", Token: v.token, UploadURL: s.config.PublicURL + "/v2/uploads/" + v.id, ExpiresAt: v.expires.Unix()}})
+			}
+		}
+	}
 	for _, g := range s.grants {
 		if g.completed && now.Before(g.expires) && now.Before(h.leases[g.owner]) &&
 			h.clients[g.owner] != nil && h.clients[g.recipient] != nil {
 			continue
 		}
 		if !h.validGrantLocked(g, now) {
-			h.notifyRevokedLocked(g,"expired-or-revoked")
+			h.notifyRevokedLocked(g, "expired-or-revoked")
 			h.releaseLocked(g, now)
 		}
 	}

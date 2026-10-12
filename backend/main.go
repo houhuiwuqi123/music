@@ -27,9 +27,9 @@ func main() {
 	gatewayURL := flag.String("gateway-public-url", os.Getenv("GATEWAY_PUBLIC_URL"), "external HTTPS gateway base URL")
 	cacheDir := flag.String("gateway-cache-dir", "./state/relay-cache", "exclusive temporary relay cache directory")
 	identityPath := flag.String("identity-store", "./state/identities.json", "persisted TOFU identity digests")
-	maxFile := flag.Int64("gateway-max-file-bytes", 512<<20, "maximum manifest file size")
+	maxFile := flag.Int64("gateway-max-file-bytes", 2<<30, "maximum manifest file size")
 	maxCache := flag.Int64("gateway-max-cache-bytes", 4<<30, "maximum reserved cache bytes")
-	maxOwner := flag.Int64("gateway-max-owner-bytes", 1<<30, "maximum reserved bytes per owner")
+	maxOwner := flag.Int64("gateway-max-owner-bytes", 2<<30, "maximum reserved bytes per owner")
 	gatewayRate := flag.Int64("gateway-bytes-per-second", 64<<20, "aggregate upload/download byte rate")
 	flag.Parse()
 	identities, err := hub.OpenIdentityStore(*identityPath)
@@ -119,8 +119,11 @@ func main() {
 		if !verified {
 			clientTURNSecret = ""
 		}
-		_ = client.Send(&model.WSMessage{Type: "config", ICEServers: hub.ICEConfig(clientID, time.Now(), turnURLs, clientTURNSecret),
-			GatewayEnabled: *gatewayPort != 0, ProtocolVersion: 2})
+		sendConfig := func() {
+			_ = client.Send(&model.WSMessage{Type: "config", ICEServers: hub.ICEConfig(clientID, time.Now(), turnURLs, clientTURNSecret),
+				GatewayEnabled: *gatewayPort != 0, ProtocolVersion: 2})
+		}
+		sendConfig()
 		_ = client.Send(&model.WSMessage{Type: "plaza", Files: snapshot})
 		if err := h.SendListeningSnapshot(client); err != nil {
 			g.Log().Warning(r.Context(), "listening snapshot failed:", err)
@@ -150,6 +153,7 @@ func main() {
 
 			switch msg.Type {
 			case "listening":
+				sendConfig()
 				if err := h.UpdateListening(client, msg.Listening, time.Now()); err != nil {
 					g.Log().Warning(r.Context(), "invalid listening update:", err)
 					if sendErr := client.Send(&model.WSMessage{Type: "error", Error: err.Error()}); sendErr != nil {
@@ -172,6 +176,20 @@ func main() {
 					continue
 				}
 				h.Broadcast(h.Snapshot())
+			case "lease-refresh":
+				if err := h.RefreshLease(client, time.Now()); err != nil {
+					_ = client.Send(&model.WSMessage{Type: "error", Error: err.Error()})
+				} else {
+					sendConfig()
+				}
+			case "share-retire":
+				if err := h.RetireShare(client, msg.FileID); err != nil {
+					_ = client.Send(&model.WSMessage{Type: "error", Error: err.Error()})
+				}
+			case "source-unavailable":
+				if err := h.SourceUnavailable(client, msg.FileID); err != nil {
+					_ = client.Send(&model.WSMessage{Type: "error", Error: err.Error()})
+				}
 
 			case "signal":
 				if msg.To == "" {
@@ -181,6 +199,7 @@ func main() {
 					_ = client.Send(&model.WSMessage{Type: "transfer-error", TransferID: msg.TransferID, Error: "invalid-signal"})
 				}
 			case "transfer-request":
+				sendConfig()
 				transfer, err := h.RequestTransfer(client, &msg, time.Now())
 				if err != nil {
 					_ = client.Send(&model.WSMessage{Type: "transfer-error", RequestID: msg.RequestID, TransferID: msg.TransferID, Error: err.Error()})
@@ -188,11 +207,21 @@ func main() {
 				}
 				_ = client.Send(&model.WSMessage{Type: "transfer", RequestID: msg.RequestID, Transfer: transfer})
 			case "transfer-cancel", "transfer-complete":
-				if err := h.ReleaseTransfer(client, msg.TransferID); err != nil {
+				var err error
+				if msg.Type == "transfer-complete" {
+					err = h.CompleteTransfer(client, msg.TransferID)
+				} else {
+					err = h.CancelTransfer(client, msg.RequestID, msg.TransferID)
+				}
+				if err != nil {
+					_ = client.Send(&model.WSMessage{Type: "transfer-error", TransferID: msg.TransferID, Error: err.Error()})
+				}
+			case "upload-error":
+				if err := h.UploadError(client, msg.TransferID); err != nil {
 					_ = client.Send(&model.WSMessage{Type: "transfer-error", TransferID: msg.TransferID, Error: err.Error()})
 				}
 			case "config":
-				_ = client.Send(&model.WSMessage{Type: "config", ICEServers: hub.ICEConfig(clientID, time.Now(), turnURLs, clientTURNSecret), GatewayEnabled: *gatewayPort != 0, ProtocolVersion: 2})
+				sendConfig()
 			}
 		}
 	})

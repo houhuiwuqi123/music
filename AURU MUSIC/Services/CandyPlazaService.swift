@@ -99,6 +99,7 @@ final class CandyPlazaService: ObservableObject {
     private var listeningTrack: Track?
     private var automaticShareTrackID: UUID?
     private var shareGeneration = 0
+    private var hasSourceLease = false
     private var outgoingMessages: [String] = []
     private var outgoingMessageIndex = 0
     private var isSendingMessage = false
@@ -295,7 +296,6 @@ final class CandyPlazaService: ObservableObject {
                 self.automaticShareTrackID = nil
                 self.manifestTask = nil
                 self.errorMessage = "当前歌曲无法自动分享：\(error.localizedDescription)"
-                self.transfers.withdraw()
                 self.sendListening()
             }
         }
@@ -303,12 +303,20 @@ final class CandyPlazaService: ObservableObject {
 
     private func sendListening() {
         guard connectionState == .connected, supportsListening else { return }
-        if sharesListening, listeningTrack != nil, shares.isEmpty, manifestTask != nil { return }
+        if sharesListening, listeningTrack != nil, shares.isEmpty {
+            guard hasSourceLease else { return }
+            do { sendData(try encoder.encode(CandyTransferEnvelope(type: "lease-refresh"))) }
+            catch { errorMessage = "无法刷新在线分享授权：\(error.localizedDescription)" }
+            return
+        }
         var state = sharesListening ? localListening : nil
         state?.avatar = avatar
         state?.ownerName = nickname
         state?.file = shares.values.first
-        do { sendData(try encoder.encode(CandyPlazaMessage(type: "listening", listening: state))) }
+        do {
+            sendData(try encoder.encode(CandyPlazaMessage(type: "listening", listening: state)))
+            hasSourceLease = state?.file != nil
+        }
         catch { errorMessage = "无法编码分享状态：\(error.localizedDescription)" }
     }
 
@@ -344,6 +352,7 @@ final class CandyPlazaService: ObservableObject {
             guard let url = components?.url else { throw URLError(.badURL) }
             connectionState = .connecting
             supportsListening = false
+            hasSourceLease = false
             markListenersOffline()
             outgoingMessages.removeAll()
             outgoingMessageIndex = 0
@@ -439,6 +448,7 @@ final class CandyPlazaService: ObservableObject {
         isSendingMessage = false
         connectionState = .disconnected
         supportsListening = false
+        hasSourceLease = false
         markListenersOffline()
         connectionError = message
         files = []

@@ -138,6 +138,10 @@ function verifySource() {
     assert.ok(transfer.includes('type: "transfer-complete"'));
     assert.ok(transfer.includes('type: "complete"'));
     assert.ok(transfer.includes('case "transfer-revoked":'));
+    assert.ok(transfer.includes('job.generation = generation') && transfer.includes('grant.generation == signal.generation'));
+    assert.ok(transfer.includes('job.requestID = UUID().uuidString.lowercased()'));
+    assert.ok(service.includes('type: "share-retire"') && service.includes('type: "lease-refresh"'));
+    assert.ok(transfer.includes('type: "source-unavailable"') && transfer.includes('type: "upload-error"'));
     assert.ok(transfer.includes('func publish(') && !transfer.slice(transfer.indexOf('func publish('), transfer.indexOf('func withdraw(')).includes('closePeer'));
     const project = fs.readFileSync(path.join(root, 'MusicPlayer.xcodeproj', 'project.pbxproj'), 'utf8');
     assert.equal((project.match(/CandyReliableTransfer.swift in Sources/g) || []).length, 2);

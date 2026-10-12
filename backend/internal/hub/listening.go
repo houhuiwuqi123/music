@@ -218,6 +218,7 @@ func (h *Hub) DisconnectListening(client *Client, now time.Time) {
 		h.mu.Unlock()
 		return
 	}
+
 	delete(h.clients, client.ID)
 	h.revokeLocked(client.ID)
 	delete(h.leases, client.ID)
@@ -236,4 +237,144 @@ func (h *Hub) DisconnectListening(client *Client, now time.Time) {
 	}
 	h.broadcastListeningLocked()
 	h.Broadcast(h.Snapshot())
+}
+
+func (h *Hub) RefreshLease(client *Client, now time.Time) error {
+	h.listeningMu.Lock()
+	defer h.listeningMu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.clients[client.ID] != client || !client.Verified {
+		return fmt.Errorf("identity-required")
+	}
+	entry, exists := h.listening[client.ID]
+	if !exists || entry.state.OfflineAt != nil || !now.Before(h.leases[client.ID]) {
+		return fmt.Errorf("source-offline")
+	}
+	entry.updated = now
+	h.listening[client.ID] = entry
+	h.leases[client.ID] = now.Add(ListeningTTL)
+	return nil
+}
+
+// RetireShare closes admission while a replacement manifest is being computed.
+func (h *Hub) RetireShare(client *Client, fileID string) error {
+	h.listeningMu.Lock()
+	defer h.listeningMu.Unlock()
+	h.mu.Lock()
+	if h.clients[client.ID] != client {
+		h.mu.Unlock()
+		return fmt.Errorf("client is no longer registered")
+	}
+
+	if fileID == "" {
+		h.mu.Unlock()
+		return fmt.Errorf("missing fileId")
+	}
+	if f := h.files[fileID]; f != nil && f.OwnerID != client.ID {
+		h.mu.Unlock()
+		return fmt.Errorf("file belongs to another client")
+	}
+	entry, exists := h.listening[client.ID]
+	if exists && entry.state.File != nil && entry.state.File.ID == fileID {
+		entry.state.File = nil
+		h.listening[client.ID] = entry
+	}
+	delete(h.files, fileID)
+	if h.current[client.ID] == fileID {
+		delete(h.current, client.ID)
+	}
+	h.mu.Unlock()
+	h.broadcastListeningLocked()
+	h.Broadcast(h.Snapshot())
+	return nil
+}
+
+func (h *Hub) SourceUnavailable(client *Client, fileID string) error {
+	h.listeningMu.Lock()
+	defer h.listeningMu.Unlock()
+	h.mu.Lock()
+	if h.clients[client.ID] != client {
+		h.mu.Unlock()
+		return fmt.Errorf("client is no longer registered")
+	}
+	if fileID == "" {
+		h.mu.Unlock()
+		return fmt.Errorf("missing fileId")
+	}
+	if f := h.files[fileID]; f != nil && f.OwnerID != client.ID {
+		h.mu.Unlock()
+		return fmt.Errorf("file belongs to another client")
+	}
+	known := false
+	if f := h.files[fileID]; f != nil && f.OwnerID == client.ID {
+		known = true
+	}
+	contents := map[*relayContent]bool{}
+	if h.transfers != nil {
+		for _, g := range h.transfers.grants {
+			if g.file.ID == fileID {
+				if g.owner != client.ID {
+					h.mu.Unlock()
+					return fmt.Errorf("file belongs to another client")
+				}
+				known = true
+				if g.content != nil {
+					contents[g.content] = true
+				}
+			}
+		}
+		for _, v := range h.transfers.contents {
+			if v.owner == client.ID && v.file.ID == fileID {
+				known = true
+				contents[v] = true
+			}
+		}
+	}
+	if !known {
+		h.mu.Unlock()
+		return nil
+	}
+	delete(h.files, fileID)
+	if h.current[client.ID] == fileID {
+		delete(h.current, client.ID)
+	}
+	if entry, exists := h.listening[client.ID]; exists && entry.state.File != nil && entry.state.File.ID == fileID {
+		entry.state.File = nil
+		h.listening[client.ID] = entry
+	}
+	if h.transfers != nil {
+		for _, g := range h.transfers.grants {
+			if g.owner == client.ID && g.file.ID == fileID {
+				h.notifyRevokedLocked(g, "source-unavailable")
+				h.releaseLocked(g, time.Now())
+			}
+		}
+		for v := range contents {
+			if v.refs != 0 {
+				if !v.ready && !v.failed && v.file.ID == fileID {
+					_ = client.Send(&model.WSMessage{Type: "transfer-revoked", TransferID: v.id, Error: "source-unavailable"})
+					for _, remaining := range h.transfers.grants {
+						if remaining.content == v {
+							v.file = remaining.file
+							break
+						}
+					}
+					v.scheduled = false
+				}
+				continue
+			}
+			if !v.failed && v.scheduled && !v.ready {
+				_ = client.Send(&model.WSMessage{Type: "transfer-revoked", TransferID: v.id, Error: "source-unavailable"})
+			}
+			v.failed = true
+			v.cancel()
+			v.idle = time.Now().Add(-h.transfers.config.IdleTTL)
+		}
+		h.scheduleLocked(client.ID, time.Now())
+	}
+	h.mu.Unlock()
+	h.broadcastListeningLocked()
+	h.Broadcast(h.Snapshot())
+	return nil
 }

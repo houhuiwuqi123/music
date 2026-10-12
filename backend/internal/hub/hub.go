@@ -94,23 +94,25 @@ func (c *Client) Close() {
 
 // Hub 维护在线客户端与广场文件列表，是信令服务的核心状态容器。
 type Hub struct {
-	mu          sync.RWMutex
-	clients     map[string]*Client
-	files       map[string]*model.FileMeta // fileId -> meta
-	listeningMu sync.Mutex
-	listening   map[string]listeningEntry
-	transfers   *transferStore
-	leases      map[string]time.Time
-	current     map[string]string
+	mu               sync.RWMutex
+	clients          map[string]*Client
+	files            map[string]*model.FileMeta // fileId -> meta
+	listeningMu      sync.Mutex
+	listening        map[string]listeningEntry
+	transfers        *transferStore
+	leases           map[string]time.Time
+	current          map[string]string
+	canceledRequests map[string]map[string]time.Time
 }
 
 func New() *Hub {
 	return &Hub{
-		clients:   make(map[string]*Client),
-		files:     make(map[string]*model.FileMeta),
-		listening: make(map[string]listeningEntry),
-		leases:    make(map[string]time.Time),
-		current:   make(map[string]string),
+		clients:          make(map[string]*Client),
+		files:            make(map[string]*model.FileMeta),
+		listening:        make(map[string]listeningEntry),
+		leases:           make(map[string]time.Time),
+		current:          make(map[string]string),
+		canceledRequests: make(map[string]map[string]time.Time),
 	}
 }
 

@@ -434,7 +434,7 @@ func TestIdentityPersistenceAndTURN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret := uuid.NewString()
+	secret := uuid.NewString() + uuid.NewString()
 	if verified, err := s.Authenticate("owner", secret); err != nil || !verified {
 		t.Fatal(err)
 	}

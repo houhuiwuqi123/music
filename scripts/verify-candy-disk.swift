@@ -8,6 +8,15 @@ struct DiskVerification {
     }
 
     static func main() async throws {
+        let fixture = """
+        {"type":"transfer","requestId":"request","transfer":{"id":"grant","file":{"id":"file","name":"song.mp3","size":123,"ownerId":"owner","ownerName":"Visitor","sha256":"HASH","protocolVersion":2},"mode":"p2p","token":"TOKEN","downloadURL":"https://music.webtrc.eu.cc/gateway/v2/transfers/grant/download","expiresAt":2000000000,"status":"ready","generation":4}}
+        """
+        let envelope = try JSONDecoder().decode(CandyTransferEnvelope.self, from: Data(fixture.utf8))
+        try require(envelope.transfer?.generation == 4, "Server is authoritative for peer generation")
+        let encoded = try JSONEncoder().encode(CandyTransferEnvelope(type: "transfer-request",
+            requestId: "resume-request", fileId: "file", to: "owner", transferId: "grant", mode: "relay"))
+        let request = try JSONDecoder().decode(CandyTransferEnvelope.self, from: encoded)
+        try require(request.transferId == "grant" && request.mode == "relay", "Same-grant relay fallback contract")
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("candy-disk-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer {

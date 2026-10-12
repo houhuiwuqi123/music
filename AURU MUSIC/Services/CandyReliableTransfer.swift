@@ -11,6 +11,7 @@ struct CandyTransferGrant: Codable {
     var uploadURL: String?
     var expiresAt: Int64
     var status: String?
+    var generation: Int?
 }
 
 struct CandyTransferICE: Codable {
@@ -389,7 +390,7 @@ final class CandyReliableTransfer {
     private final class Job {
         let file: CandyPlazaFile
         let disk: CandyTransferDisk
-        let requestID = UUID().uuidString.lowercased()
+        var requestID = UUID().uuidString.lowercased()
         var grant: CandyTransferGrant?
         var generation = 0
         var task: Task<Void, Never>?
@@ -401,6 +402,7 @@ final class CandyReliableTransfer {
         var lastUIUpdate = Date.distantPast
         var forceRelay = false
         var offset: Int64 = 0
+        var awaitingGrant = false
         init(file: CandyPlazaFile, folder: URL) {
             self.file = file
             disk = CandyTransferDisk(file: file, folder: folder)
@@ -424,7 +426,7 @@ final class CandyReliableTransfer {
     private var earlyCandidates: [String: [CandyTransferSignal.Candidate]] = [:]
     private var uploads: [String: Task<Void, Never>] = [:]
     private var uploadFiles: [String: String] = [:]
-    private var cancelledUploads: Set<String> = []
+    private var cancelledUploads: [String: Date] = [:]
     private var iceServers: [CandyTransferICE] = []
     private var gatewayEnabled = false
     private var configured = false
@@ -492,6 +494,7 @@ final class CandyReliableTransfer {
                 job.task = nil
                 parkDisk(job)
                 job.grant = nil
+                job.awaitingGrant = false
                 job.status = "等待重新连接"
                 changed?(job.file, progress(job), job.status)
             }
@@ -515,7 +518,7 @@ final class CandyReliableTransfer {
                         }.value
                         for id in invalid where self.publications[id] != nil { self.sourceUnavailable(id) }
                     }
-                    for peer in Array(self.peers.values) where peer.channel?.readyState != .open {
+                    for peer in Array(self.peers.values) where peer.channel?.readyState != .open && !peer.eofSent {
                         if Date().timeIntervalSince(peer.created) > 20 { peer.onFailure?("下载建连超过 20 秒，正在恢复。") }
                     }
                     for job in Array(self.jobs.values) {
@@ -594,10 +597,13 @@ final class CandyReliableTransfer {
         case "transfer":
             guard let grant = message.transfer,
                   let job = jobs.values.first(where: { $0.requestID == message.requestId || $0.grant?.id == grant.id }),
-                  grant.file.sha256 == job.file.sha256, grant.file.size == job.file.size,
+                  grant.file.id == job.file.id, grant.file.sha256 == job.file.sha256, grant.file.size == job.file.size,
                   grant.file.ownerId == job.file.ownerId else { return }
+            if let requestID = message.requestId, requestID != job.requestID { return }
+            if let previous = job.grant?.generation, let incoming = grant.generation, incoming < previous { return }
             let alreadyRunning = job.grant?.id == grant.id && (job.task != nil || peers[grant.id] != nil)
             job.grant = grant
+            job.awaitingGrant = false
             if !alreadyRunning {
                 if grant.mode == "relay" { receiveRelay(job) }
                 else if grant.mode == "p2p" { startPeer(job) }
@@ -618,6 +624,13 @@ final class CandyReliableTransfer {
             authorized.removeValue(forKey: id)
             recipients.removeValue(forKey: id)
         case "transfer-error":
+            if let id = message.transferId, authorized[id] != nil {
+                closePeer(id)
+                authorized.removeValue(forKey: id)
+                recipients.removeValue(forKey: id)
+                failed?(nil, message.error ?? "发送授权已失效。")
+                return
+            }
             guard let job = jobs.values.first(where: { $0.requestID == message.requestId || $0.grant?.id == message.transferId }) else {
                 failed?(nil, message.error ?? "服务器拒绝传输请求。")
                 return
@@ -629,7 +642,11 @@ final class CandyReliableTransfer {
             authorized.removeValue(forKey: id)
             recipients.removeValue(forKey: id)
             uploads.removeValue(forKey: id)?.cancel()
-            cancelledUploads.insert(id)
+            cancelledUploads[id] = Date()
+            cancelledUploads = cancelledUploads.filter { Date().timeIntervalSince($0.value) < 7200 }
+            if cancelledUploads.count > 1024, let oldest = cancelledUploads.min(by: { $0.value < $1.value })?.key {
+                cancelledUploads.removeValue(forKey: oldest)
+            }
             if let job = jobs.values.first(where: { $0.grant?.id == id }) {
                 fail(job, message.error ?? "发布者已撤销下载授权。")
             }
@@ -646,12 +663,13 @@ final class CandyReliableTransfer {
     }
 
     private func resumeRequests() {
-        for job in jobs.values where job.task == nil && job.grant == nil { request(job) }
+        for job in jobs.values where job.task == nil && job.grant == nil && !job.awaitingGrant { request(job) }
     }
 
     private func request(_ job: Job) {
         guard connected, configured else { return }
         job.lastRequest = Date()
+        job.awaitingGrant = true
         if job.grant == nil { job.lastProgress = Date() }
         job.status = "等待下载授权"
         changed?(job.file, progress(job), job.status)
@@ -696,6 +714,10 @@ final class CandyReliableTransfer {
                 try Task.checkCancellation()
                 guard let self, self.jobs[job.file.id] === job else { return }
                 job.task = nil
+                if job.grant == nil {
+                    self.send?(CandyTransferEnvelope(type: "transfer-cancel", requestId: job.requestID))
+                }
+                job.requestID = UUID().uuidString.lowercased()
                 self.request(job)
             } catch is CancellationError { return }
             catch {
@@ -841,7 +863,7 @@ final class CandyReliableTransfer {
     }
 
     private func upload(_ grant: CandyTransferGrant) {
-        guard !cancelledUploads.contains(grant.id), uploads[grant.id] == nil else { return }
+        guard cancelledUploads[grant.id] == nil, uploads[grant.id] == nil else { return }
         guard let publication = publications[grant.file.id],
               publication.file.sha256 == grant.file.sha256, publication.file.size == grant.file.size else {
             send?(CandyTransferEnvelope(type: "upload-error", transferId: grant.id, error: "Source snapshot is unavailable."))
@@ -918,7 +940,11 @@ final class CandyReliableTransfer {
 
     private func startPeer(_ job: Job) {
         guard let grant = job.grant, let remote = grant.file.ownerId else { return }
-        job.generation += 1
+        guard let generation = grant.generation, generation > 0 else {
+            fail(job, "服务器没有提供有效的连接代次。")
+            return
+        }
+        job.generation = generation
         let peer = makePeer(grant: grant, remote: remote, generation: job.generation, serving: false)
         let config = RTCDataChannelConfiguration()
         config.isOrdered = true
@@ -1014,7 +1040,8 @@ final class CandyReliableTransfer {
         let peer: CandyTransferPeer
         if signal.kind == "offer" {
             guard let grant = authorized[signal.transferId], recipients[signal.transferId] == remote,
-                  grant.file.id == signal.fileId, grant.expiresAt > Int64(Date().timeIntervalSince1970) else { return }
+                  grant.file.id == signal.fileId, grant.generation == signal.generation,
+                  grant.expiresAt > Int64(Date().timeIntervalSince1970) else { return }
             if let previous = peers[grant.id], previous.generation >= signal.generation { return }
             guard peers.values.filter({ $0.serving }).count < 2 || peers[grant.id] != nil else {
                 failed?(nil, "发送并发超过授权上限。")
@@ -1171,6 +1198,7 @@ final class CandyReliableTransfer {
                     try await Task.sleep(nanoseconds: 25_000_000)
                 }
                 try peer.control(CandyTransferControl(type: "eof", size: grant.file.size, sha256: grant.file.sha256))
+                peer.eofSent = true
                 try await input.close()
                 source = nil
                 let deadline = Date().addingTimeInterval(30)
@@ -1260,6 +1288,7 @@ private final class CandyTransferPeer: NSObject, RTCPeerConnectionDelegate, RTCD
     var worker: Task<Void, Never>?
     var acknowledged: Int64 = 0
     var sentOffset: Int64 = 0
+    var eofSent = false
     var lastProgress = Date()
     let created = Date()
     var onCandidate: (@MainActor (RTCIceCandidate) -> Void)?
@@ -1326,13 +1355,15 @@ private final class CandyTransferPeer: NSObject, RTCPeerConnectionDelegate, RTCD
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
         if newState == .failed || newState == .disconnected {
-            Task { @MainActor in onFailure?("点对点连接中断，正在恢复。") }
+            Task { @MainActor in
+                if !(serving && eofSent) { onFailure?("点对点连接中断，正在恢复。") }
+            }
         }
     }
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
         Task { @MainActor in
             if dataChannel.readyState == .open { open() }
-            else if dataChannel.readyState == .closed { onFailure?("文件通道已关闭。") }
+            else if dataChannel.readyState == .closed, !(serving && eofSent) { onFailure?("文件通道已关闭。") }
         }
     }
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {

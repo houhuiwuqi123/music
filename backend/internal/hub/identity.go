@@ -58,7 +58,16 @@ func (s *IdentityStore) Authenticate(id, secret string) (bool, error) {
 		}
 		return false, nil
 	}
-	if _, err := uuid.Parse(secret); err != nil {
+	validSecret := false
+	if len(secret) == 36 {
+		_, err := uuid.Parse(secret)
+		validSecret = err == nil
+	} else if len(secret) == 72 {
+		_, firstErr := uuid.Parse(secret[:36])
+		_, secondErr := uuid.Parse(secret[36:])
+		validSecret = firstErr == nil && secondErr == nil
+	}
+	if !validSecret {
 		return false, errors.New("invalid secret")
 	}
 	sum := sha256.Sum256([]byte(secret))
