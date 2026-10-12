@@ -152,21 +152,35 @@ final class CandyPlazaService: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
-        clientID = defaults.string(forKey: "candy_client_id") ?? UUID().uuidString.lowercased()
-        defaults.set(clientID, forKey: "candy_client_id")
-        nickname = defaults.string(forKey: "candy_nickname") ?? "游客\(Int.random(in: 1000...9999))"
-        defaults.set(nickname, forKey: "candy_nickname")
-        avatar = defaults.string(forKey: "candy_avatar")
-        sharesListening = defaults.object(forKey: "candy_shares_listening") as? Bool ?? true
+        let initialClientID = defaults.string(forKey: "candy_client_id") ?? UUID().uuidString.lowercased()
+        let initialNickname = defaults.string(forKey: "candy_nickname") ?? "游客\(Int.random(in: 1000...9999))"
+        let initialAvatar = defaults.string(forKey: "candy_avatar")
+        let initialSharesListening = defaults.object(forKey: "candy_shares_listening") as? Bool ?? true
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        downloadFolder = documents.appendingPathComponent("Candy Downloads", isDirectory: true)
+        let initialDownloadFolder = documents.appendingPathComponent("Candy Downloads", isDirectory: true)
+
+        var initialHistory: [CandyPlazaHistory] = []
+        var initialErrorMessage: String?
         if let data = defaults.data(forKey: "candy_receive_log") {
-            do { receiveHistory = Array(try JSONDecoder().decode([CandyPlazaHistory].self, from: data).prefix(100)) }
-            catch {
-                receiveHistory = []
-                errorMessage = "接收记录无法读取：\(error.localizedDescription)"
+            do {
+                initialHistory = Array(try JSONDecoder().decode([CandyPlazaHistory].self, from: data).prefix(100))
+            } catch {
+                initialErrorMessage = "接收记录无法读取：\(error.localizedDescription)"
             }
-        } else { receiveHistory = [] }
+        }
+
+        // 严格遵循 Swift 两段式初始化：在所有存储属性赋初值前，绝不调用任何方法或触发属性 observer/defaults
+        self.clientID = initialClientID
+        self.nickname = initialNickname
+        self.avatar = initialAvatar
+        self.sharesListening = initialSharesListening
+        self.downloadFolder = initialDownloadFolder
+        self.receiveHistory = initialHistory
+        self.errorMessage = initialErrorMessage
+
+        // 初始化完成后再执行副作用
+        defaults.set(initialClientID, forKey: "candy_client_id")
+        defaults.set(initialNickname, forKey: "candy_nickname")
     }
 
     func start() {
