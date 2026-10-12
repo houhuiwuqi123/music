@@ -120,10 +120,13 @@ struct CandyPlazaView: View {
 
                 if !visibleListeners.isEmpty {
                     ForEach(visibleListeners) { listener in
+                        let index = visibleListeners.firstIndex(where: { $0.id == listener.id }) ?? 0
                         CandyFileStar(
                             listener: listener,
                             download: listener.file.flatMap { plaza.downloads[$0.id] },
                             fieldSize: geometry.size,
+                            slotIndex: index,
+                            totalSlots: max(1, visibleListeners.count),
                             action: { selectedFile = listener.file }
                         )
                         .id(listener.id)
@@ -231,6 +234,8 @@ private struct CandyFileStar: View {
     let listener: CandyPlazaListening
     let download: CandyPlazaDownload?
     let fieldSize: CGSize
+    let slotIndex: Int
+    let totalSlots: Int
     let action: () -> Void
     @State private var flightStartedAt = Date()
     @State private var frozenDate: Date?
@@ -258,9 +263,12 @@ private struct CandyFileStar: View {
             let seed = hash &+ UInt32(truncatingIfNeeded: cycle) &* 2_654_435_761
             let startX = 0.86 + Double(seed % 100) / 100 * 0.10
             let endX = 0.10 + Double((seed >> 8) % 100) / 100 * 0.12
-            let x = startX + (endX - startX) * progress
             let y = 0.88 - progress * 0.73
             let scale = 1.15 - progress * 0.70
+            // 空间位置分散：通过用户唯一哈希与 slotIndex 在右下角随机分配非重叠区域（左右偏移 ±28pt，上下偏移 ±18pt）
+            let userOffsetX = totalSlots > 1 ? (Double((hash ^ (UInt32(slotIndex) &* 31)) % 100) / 100.0 - 0.5) * 56.0 : 0
+            let userOffsetY = totalSlots > 1 ? (Double(((hash >> 8) ^ (UInt32(slotIndex) &* 17)) % 100) / 100.0 - 0.5) * 36.0 : 0
+            let x = startX + (endX - startX) * progress
             Button(action: action) {
                 VStack(spacing: 5) {
                     ZStack {
@@ -295,11 +303,12 @@ private struct CandyFileStar: View {
                     }
                     .frame(width: 54, height: 42)
                     .shadow(color: isComplete ? .green : .clear, radius: 16)
-                    VStack(spacing: 1) {
+                    VStack(spacing: 2) {
                         Text("\(listener.ownerName) · \(listener.region ?? "地区未知")")
                             .font(.system(size: 13, weight: .heavy))
                             .foregroundStyle(Color(red: 1, green: 0.82, blue: 0.42))
                             .lineLimit(1)
+                            .truncationMode(.tail)
                         Text(listener.title)
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(.white.opacity(0.92))
@@ -307,7 +316,7 @@ private struct CandyFileStar: View {
                             .truncationMode(.tail)
                             .multilineTextAlignment(.center)
                     }
-                    .frame(width: 132)
+                    .frame(width: 144)
                 }
             }
             .buttonStyle(.plain)
@@ -315,7 +324,10 @@ private struct CandyFileStar: View {
             .saturation(listener.isOffline ? 0 : 1)
             .opacity(listener.isOffline ? 0.45 : max(0, min(1, sin(progress * .pi) * 3)))
             .scaleEffect(scale)
-            .position(x: fieldSize.width * x, y: fieldSize.height * y)
+            .position(
+                x: min(max(fieldSize.width * 0.12, fieldSize.width * x + userOffsetX), fieldSize.width * 0.94),
+                y: min(max(fieldSize.height * 0.12, fieldSize.height * y + userOffsetY), fieldSize.height * 0.94)
+            )
         }
         .onAppear {
             if download?.state.isComplete == true { showSuccessGlow() }

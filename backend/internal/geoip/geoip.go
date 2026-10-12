@@ -34,10 +34,12 @@ func (r *Resolver) Region(ip net.IP) (string, error) {
 	}
 	var record struct {
 		Country struct {
-			Names map[string]string `maxminddb:"names"`
+			IsoCode string            `maxminddb:"iso_code"`
+			Names   map[string]string `maxminddb:"names"`
 		} `maxminddb:"country"`
 		Subdivisions []struct {
-			Names map[string]string `maxminddb:"names"`
+			IsoCode string            `maxminddb:"iso_code"`
+			Names   map[string]string `maxminddb:"names"`
 		} `maxminddb:"subdivisions"`
 		City struct {
 			Names map[string]string `maxminddb:"names"`
@@ -46,25 +48,58 @@ func (r *Resolver) Region(ip net.IP) (string, error) {
 	if err := r.db.Lookup(ip, &record); err != nil {
 		return "", fmt.Errorf("GeoIP lookup: %w", err)
 	}
-	names := []map[string]string{record.Country.Names}
-	for _, subdivision := range record.Subdivisions {
-		names = append(names, subdivision.Names)
-	}
-	names = append(names, record.City.Names)
-	parts := []string{}
-	for _, name := range names {
-		value := name["zh-CN"]
-		if value == "" {
-			value = name["en"]
+
+	getName := func(names map[string]string) string {
+		if val := names["zh-CN"]; val != "" {
+			return val
 		}
-		if value != "" && (len(parts) == 0 || parts[len(parts)-1] != value) {
-			parts = append(parts, value)
+		return names["en"]
+	}
+
+	countryCode := strings.ToUpper(strings.TrimSpace(record.Country.IsoCode))
+	countryName := getName(record.Country.Names)
+	cityName := getName(record.City.Names)
+
+	var subName string
+	if len(record.Subdivisions) > 0 {
+		subName = getName(record.Subdivisions[0].Names)
+	}
+
+	// 1. 国内（中国）：仅显示具体省份/直辖市/特别行政区
+	if countryCode == "CN" {
+		if subName != "" {
+			return subName, nil
 		}
+		if cityName != "" {
+			return cityName, nil
+		}
+		if countryName != "" {
+			return countryName, nil
+		}
+		return "中国", nil
 	}
-	if len(parts) == 0 {
-		return "地区未知", nil
+
+	// 2. 国外：显示“国家-城市”
+	if countryName != "" {
+		detail := cityName
+		if detail == "" {
+			detail = subName
+		}
+		if detail != "" && detail != countryName {
+			return countryName + "-" + detail, nil
+		}
+		return countryName, nil
 	}
-	return strings.Join(parts, " · "), nil
+
+	// 兜底：若只有城市或省份
+	if cityName != "" {
+		return cityName, nil
+	}
+	if subName != "" {
+		return subName, nil
+	}
+
+	return "地区未知", nil
 }
 
 func ParseTrustedProxies(value string) ([]*net.IPNet, error) {

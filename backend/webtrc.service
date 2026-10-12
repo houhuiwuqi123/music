@@ -1,0 +1,27 @@
+[Unit]
+Description=WebTRC Go Backend Service
+After=network.target
+
+[Service]
+Type=simple
+# 1. 明确指定工作目录
+WorkingDirectory=/www/wwwroot/webtrc/backend
+
+# 2. 核心：在启动命令后面加上网关参数和外部访问 URL
+ExecStart=/www/wwwroot/webtrc/backend/server -port 8080 -gateway-port 8081 -gateway-public-url https://music.webtrc.eu.cc/gateway -gateway-cache-dir /www/wwwroot/webtrc/backend/state/relay-cache -identity-store /www/wwwroot/webtrc/backend/state/identities.json -geoip-db /www/wwwroot/webtrc/backend/GeoLite2-City.mmdb
+
+# === 稳定保障 ===
+Restart=always
+RestartSec=5s
+User=root
+
+# 资源上限（保障高并发/下载传输不被系统限制）
+LimitNOFILE=65536
+
+# 日志输出
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=webtrc-backend
+
+[Install]
+WantedBy=multi-user.target

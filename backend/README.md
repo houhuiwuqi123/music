@@ -159,7 +159,12 @@ Provision coturn TLS files and external public IP/NAT mapping, then open UDP/TCP
 
 ## Local IP-region lookup
 
-Use `-geoip-db 'C:\GeoIP\GeoLite2-City.mmdb'` or `GEOIP_DB_PATH`; provision a licensed compatible MMDB yourself. Do not use the MaxMind test fixture in production. `-trusted-proxies '127.0.0.1/32,::1/128'` or `TRUSTED_PROXY_CIDRS` should include only actual reverse proxies. No proxy headers are trusted by default; never trust `0.0.0.0/0`. The template overwrites `X-Forwarded-For`; additional upstream proxies require carefully verified real-IP configuration.
+Use `-geoip-db 'C:\GeoIP\GeoLite2-City.mmdb'` or `GEOIP_DB_PATH`; provision a licensed compatible MMDB (e.g. GeoLite2-City / GeoIP2-City).
+- **国内 IP**：提取一级行政区，仅展示具体省份/直辖市/特别行政区（如 `广东省`、`北京市`、`浙江省`、`香港`）。
+- **国外 IP**：展示格式为 `国家-城市`（若城市缺失则回退到 `国家-地区` 或 `国家`，如 `日本-东京`、`美国-洛杉矶`）。
+- 未匹配/内网地址/未配置数据库时展示 `地区未知`。
+
+`-trusted-proxies '127.0.0.1/32,::1/128'` or `TRUSTED_PROXY_CIDRS` should include only actual reverse proxies. No proxy headers are trusted by default; never trust `0.0.0.0/0`. The template overwrites `X-Forwarded-For`; additional upstream proxies require carefully verified real-IP configuration.
 
 No IP is sent to an external lookup service. Only approximate region names are broadcast. Missing DB displays “地区未知”; unreadable configured DB fails startup. Private/unmatched addresses and lookup failures display unknown.
 
