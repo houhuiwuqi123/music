@@ -46,6 +46,9 @@ async function main() {
         // Cross-check the Swift-signed envelope with the JS verifier (same rules as the Go node).
         const envelopeLine = lines.find(line => line.startsWith('ENVELOPE:'));
         assert.ok(envelopeLine, 'Swift did not print its envelope');
+        if (!fs.existsSync(path.join(root, 'web', 'node_modules', '@libp2p', 'crypto'))) {
+            throw new Error('Swift checks passed, but the JS cross-check needs the web dependencies: run `npm install` in web/ (Node 22.6+), then rerun this script.');
+        }
         const { verifyEnvelope } = await import(pathToFileURL(path.join(root, 'web', 'src', 'lib', 'plaza.ts')).href);
         const body = await verifyEnvelope(JSON.parse(envelopeLine.slice('ENVELOPE:'.length)));
         assert.equal(body.peerId, '12D3KooWA4Xop1JaT3MHxwYMkCepYsv4iPVopMXwCz5iHYdBfeSB');
