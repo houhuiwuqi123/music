@@ -655,13 +655,22 @@ final class CandyPlazaService: ObservableObject {
     private func findProviders(_ cid: String) async throws -> [CandyCandidate] {
         guard connectionState == .connected else { throw CandyTransferFailure.network("与节点的连接已断开") }
         let id = UUID().uuidString.lowercased()
+        // The continuation body is not main-actor isolated: register through a main-actor hop.
         return try await withCheckedThrowingContinuation { continuation in
-            pendingFinds[id] = continuation
-            send(CandyGatewayMessage(type: "find", id: id, cid: cid))
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
-                self?.pendingFinds.removeValue(forKey: id)?.resume(throwing: CandyTransferFailure.network("DHT 查询超时"))
-            }
+            Task { @MainActor in self.registerFind(id, cid: cid, continuation) }
+        }
+    }
+
+    private func registerFind(_ id: String, cid: String, _ continuation: CheckedContinuation<[CandyCandidate], Error>) {
+        guard connectionState == .connected, socket != nil else {
+            continuation.resume(throwing: CandyTransferFailure.network("与节点的连接已断开"))
+            return
+        }
+        pendingFinds[id] = continuation
+        send(CandyGatewayMessage(type: "find", id: id, cid: cid))
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            self?.pendingFinds.removeValue(forKey: id)?.resume(throwing: CandyTransferFailure.network("DHT 查询超时"))
         }
     }
 

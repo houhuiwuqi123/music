@@ -436,12 +436,17 @@ final class CandyReliableTransfer {
 
     private func pause(_ seconds: Double) async {
         let id = UUID()
+        // The continuation body is not main-actor isolated: register through a main-actor hop.
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            wakeWaiters[id] = continuation
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                self?.wakeWaiters.removeValue(forKey: id)?.resume()
-            }
+            Task { @MainActor in self.registerWake(id, continuation, seconds: seconds) }
+        }
+    }
+
+    private func registerWake(_ id: UUID, _ continuation: CheckedContinuation<Void, Never>, seconds: Double) {
+        wakeWaiters[id] = continuation
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            self?.wakeWaiters.removeValue(forKey: id)?.resume()
         }
     }
 
@@ -688,14 +693,10 @@ final class CandyReliableTransfer {
         try await connection.candyApplyLocal(offer)
         await peer.gathering.wait(seconds: 5)
         guard let local = connection.localDescription?.sdp else { throw CandyTransferFailure.network("无法生成连接描述。") }
+        let offerSignal = CandySignal(to: candidate.peerId, node: candidate.node, nodeAddrs: candidate.nodeAddrs,
+            session: session, kind: "offer", sdp: local)
         let answer: CandySignal = try await withCheckedThrowingContinuation { continuation in
-            pendingAnswers[session] = continuation
-            sendSignal?(CandySignal(to: candidate.peerId, node: candidate.node, nodeAddrs: candidate.nodeAddrs,
-                session: session, kind: "offer", sdp: local))
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 20_000_000_000)
-                self?.pendingAnswers.removeValue(forKey: session)?.resume(throwing: CandyTransferFailure.network("对方未应答"))
-            }
+            Task { @MainActor in self.awaitAnswer(offerSignal, continuation) }
         }
         guard answer.from == candidate.peerId, let remoteSDP = answer.sdp else { throw CandyTransferFailure.network("应答来源不符。") }
         try await connection.candyApplyRemote(RTCSessionDescription(type: .answer, sdp: remoteSDP))
@@ -769,6 +770,16 @@ final class CandyReliableTransfer {
         }
         try? peer.sendControl(CandyWireMessage(t: "done"))
         return url
+    }
+
+    private func awaitAnswer(_ offer: CandySignal, _ continuation: CheckedContinuation<CandySignal, Error>) {
+        let session = offer.session
+        pendingAnswers[session] = continuation
+        sendSignal?(offer)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            self?.pendingAnswers.removeValue(forKey: session)?.resume(throwing: CandyTransferFailure.network("对方未应答"))
+        }
     }
 
     private static func mime(for url: URL) -> String {
@@ -852,14 +863,21 @@ final class CandyLatch {
             return
         }
         let id = UUID()
-        let timer = Task { @MainActor [weak self] in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Task { @MainActor in self.register(id, continuation, seconds: seconds, timeoutError: timeoutError) }
+        }
+    }
+
+    private func register(_ id: UUID, _ continuation: CheckedContinuation<Void, Error>, seconds: Double, timeoutError: Error?) {
+        if finished {
+            if let failure { continuation.resume(throwing: failure) } else { continuation.resume() }
+            return
+        }
+        waiters[id] = continuation
+        Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard let self, let continuation = self.waiters.removeValue(forKey: id) else { return }
             if let timeoutError { continuation.resume(throwing: timeoutError) } else { continuation.resume() }
-        }
-        defer { timer.cancel() }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            waiters[id] = continuation
         }
     }
 
