@@ -520,8 +520,9 @@ final class CandyPlazaService: ObservableObject {
     private func refreshBootstrap() async {
         var request = URLRequest(url: Self.bootstrapURL)
         request.timeoutInterval = 6
-        guard let (data, response) = try? await session.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+        guard let result = try? await session.data(for: request),
+              (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return }
+        let data = result.0
         struct List: Decodable { var nodes: [CandyNodeInfo] }
         guard let list = try? decoder.decode(List.self, from: data), !list.nodes.isEmpty else { return }
         // Keep previously known nodes so a single failing bootstrap host is not fatal.
