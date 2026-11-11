@@ -2,57 +2,53 @@ import CryptoKit
 import Foundation
 import WebRTC
 
-struct CandyTransferGrant: Codable {
-    var id: String
-    var file: CandyPlazaFile
-    var mode: String
-    var token: String
-    var downloadURL: String?
-    var uploadURL: String?
-    var expiresAt: Int64
-    var status: String?
-    var generation: Int?
-}
+// AURU file protocol over one ordered, reliable RTCDataChannel ("auru-file/1").
+// Identical to web/src/lib/transfer.ts:
+//   R→S  {"t":"get","cid":C,"offset":N}            N is a multiple of 1 MiB
+//   S→R  {"t":"meta","cid","size","name","mime","blockSize","blocks":[hex…]} | {"t":"error","error":…}
+//   S→R  binary chunks (≤ 64 KiB) covering [N, size) in order, then {"t":"end"}
+//   R→S  {"t":"done"} | {"t":"error","error":…}
+// Every 1 MiB block is checked against `blocks` while receiving, and the whole
+// file against the SHA-256 inside the CID before it is saved as complete.
 
-struct CandyTransferICE: Codable {
-    var urls: [String]
-    var username: String?
-    var credential: String?
-}
+let candyBlockSize = 1_048_576
+let candyChunkSize = 65_536
+let candyChannelLabel = "auru-file/1"
 
-struct CandyTransferEnvelope: Codable {
-    var type: String
-    var requestId: String? = nil
-    var fileId: String? = nil
-    var to: String? = nil
+struct CandySignal: Codable, Sendable {
     var from: String? = nil
-    var transferId: String? = nil
-    var generation: Int? = nil
-    var mode: String? = nil
-    var data: String? = nil
-    var transfer: CandyTransferGrant? = nil
-    var error: String? = nil
-    var iceServers: [CandyTransferICE]? = nil
-    var gatewayEnabled: Bool? = nil
-    var protocolVersion: Int? = nil
-}
-
-private struct CandyTransferSignal: Codable {
-    struct Description: Codable { var type: String; var sdp: String }
-    struct Candidate: Codable { var candidate: String; var sdpMid: String?; var sdpMLineIndex: Int32 }
+    var to: String
+    var node: String? = nil
+    var nodeAddrs: [String]? = nil
+    var fromNode: String? = nil
+    var fromNodeAddrs: [String]? = nil
+    var session: String
     var kind: String
-    var transferId: String
-    var fileId: String
-    var generation: Int
-    var sdp: Description? = nil
-    var candidate: Candidate? = nil
+    var sdp: String? = nil
+    var hop: Int? = nil
 }
 
-private struct CandyTransferControl: Codable {
-    var type: String
+struct CandyCandidate: Codable, Sendable {
+    var peerId: String
+    var node: String
+    var nodeAddrs: [String]? = nil
+}
+
+struct CandyICEServer: Codable, Sendable {
+    var urls: [String]
+    var username: String? = nil
+    var credential: String? = nil
+}
+
+struct CandyWireMessage: Codable {
+    var t: String
+    var cid: String? = nil
     var offset: Int64? = nil
     var size: Int64? = nil
-    var sha256: String? = nil
+    var name: String? = nil
+    var mime: String? = nil
+    var blockSize: Int? = nil
+    var blocks: [String]? = nil
     var error: String? = nil
 }
 
@@ -65,14 +61,16 @@ enum CandyTransferFailure: LocalizedError {
         case .invalid(let message), .network(let message), .source(let message): return message
         }
     }
-    var retryable: Bool {
-        if case .network = self { return true }
-        return false
-    }
 }
 
+// MARK: - Disk
+
 actor CandyTransferDisk {
-    struct Manifest: Sendable { var size: Int64; var sha256: String }
+    struct Manifest: Sendable {
+        var size: Int64
+        var sha256: String
+        var blocks: [String]
+    }
     private struct Checkpoint: Codable {
         var hash: String
         var size: Int64
@@ -95,13 +93,15 @@ actor CandyTransferDisk {
     init(file: CandyPlazaFile, folder: URL) {
         self.file = file
         self.folder = folder
-        let owner = SHA256.hash(data: Data((file.ownerId ?? "").utf8)).map { String(format: "%02x", $0) }.joined()
-        let key = "\(owner)-\(file.sha256 ?? file.id)"
+        // Content-addressed: any provider of the same SHA-256 continues the same partial.
+        let namespace = SHA256.hash(data: Data("auru-dht".utf8)).map { String(format: "%02x", $0) }.joined()
+        let key = "\(namespace)-\(file.sha256 ?? file.id)"
         let staging = folder.appendingPathComponent(".partial", isDirectory: true)
         part = staging.appendingPathComponent(key).appendingPathExtension("part")
         record = staging.appendingPathComponent(key).appendingPathExtension("json")
     }
 
+    /// Whole-file SHA-256 plus per-block hashes, in one streaming pass.
     nonisolated static func manifest(_ url: URL) async throws -> Manifest {
         try await Task.detached(priority: .utility) {
             let attributes = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey])
@@ -110,19 +110,35 @@ actor CandyTransferDisk {
             }
             let input = try FileHandle(forReadingFrom: url)
             defer { try? input.close() }
-            var hasher = SHA256()
+            var whole = SHA256()
+            var block = SHA256()
+            var inBlock = 0
+            var blocks: [String] = []
             var count: Int64 = 0
             while let data = try input.read(upToCount: 262_144), !data.isEmpty {
                 try Task.checkCancellation()
-                hasher.update(data: data)
+                whole.update(data: data)
+                var cursor = data.startIndex
+                while cursor < data.endIndex {
+                    let take = min(candyBlockSize - inBlock, data.endIndex - cursor)
+                    block.update(data: data[cursor..<(cursor + take)])
+                    inBlock += take
+                    cursor += take
+                    if inBlock == candyBlockSize {
+                        blocks.append(block.finalize().map { String(format: "%02x", $0) }.joined())
+                        block = SHA256()
+                        inBlock = 0
+                    }
+                }
                 count += Int64(data.count)
             }
+            if inBlock > 0 { blocks.append(block.finalize().map { String(format: "%02x", $0) }.joined()) }
             let final = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
             guard count == Int64(size), final.fileSize == size,
                   final.contentModificationDate == attributes.contentModificationDate else {
                 throw CandyTransferFailure.source("分享文件在读取过程中发生变化。")
             }
-            return Manifest(size: count, sha256: hasher.finalize().map { String(format: "%02x", $0) }.joined())
+            return Manifest(size: count, sha256: whole.finalize().map { String(format: "%02x", $0) }.joined(), blocks: blocks)
         }.value
     }
 
@@ -140,6 +156,8 @@ actor CandyTransferDisk {
             }
         }.value
     }
+
+    var isCompleted: Bool { completedURL != nil }
 
     func prepare() async throws -> Int64 {
         if handle != nil { try close() }
@@ -165,18 +183,8 @@ actor CandyTransferDisk {
                 offset = file.size
                 return offset
             }
-            if Date().timeIntervalSince(saved.updated) < 86_400 {
-                let input = try FileHandle(forReadingFrom: part)
-                defer { try? input.close() }
-                var remaining = saved.offset
-                hasher = SHA256()
-                while remaining > 0 {
-                    guard let chunk = try input.read(upToCount: Int(min(remaining, 262_144))), !chunk.isEmpty else {
-                        throw CandyTransferFailure.invalid("下载断点文件不完整，请清除断点后重试。")
-                    }
-                    hasher.update(data: chunk)
-                    remaining -= Int64(chunk.count)
-                }
+            if Date().timeIntervalSince(saved.updated) < 86_400, FileManager.default.fileExists(atPath: part.path) {
+                try rehash(upTo: saved.offset)
                 guard digest() == saved.prefixHash else {
                     throw CandyTransferFailure.invalid("下载断点校验失败，请清除断点后重试。")
                 }
@@ -212,7 +220,18 @@ actor CandyTransferDisk {
         return offset
     }
 
-    func append(_ data: Data, at expected: Int64) throws -> Int64? {
+    /// Drops everything after `target` (a block boundary for resume, or the start
+    /// of a block that failed verification) and re-derives the prefix hash.
+    func rewind(to target: Int64) throws {
+        guard completedURL == nil, let handle, target >= 0, target <= offset else { return }
+        try handle.truncate(atOffset: UInt64(target))
+        try rehash(upTo: target)
+        offset = target
+        try handle.seek(toOffset: UInt64(target))
+        try checkpoint()
+    }
+
+    func append(_ data: Data, at expected: Int64) throws {
         guard completedURL == nil, let handle, expected == offset, !data.isEmpty, data.count <= 1_048_576,
               Int64(data.count) <= file.size - offset else {
             throw CandyTransferFailure.invalid("收到越界或顺序错误的歌曲数据。")
@@ -220,11 +239,7 @@ actor CandyTransferDisk {
         try handle.write(contentsOf: data)
         hasher.update(data: data)
         offset += Int64(data.count)
-        if offset - checkpointOffset >= 262_144 || offset == file.size {
-            try checkpoint()
-            return offset
-        }
-        return nil
+        if offset - checkpointOffset >= 262_144 || offset == file.size { try checkpoint() }
     }
 
     func durableOffset() throws -> Int64 {
@@ -284,6 +299,20 @@ actor CandyTransferDisk {
         hasher = SHA256()
     }
 
+    private func rehash(upTo target: Int64) throws {
+        let input = try FileHandle(forReadingFrom: part)
+        defer { try? input.close() }
+        var remaining = target
+        hasher = SHA256()
+        while remaining > 0 {
+            guard let chunk = try input.read(upToCount: Int(min(remaining, 262_144))), !chunk.isEmpty else {
+                throw CandyTransferFailure.invalid("下载断点文件不完整，请清除断点后重试。")
+            }
+            hasher.update(data: chunk)
+            remaining -= Int64(chunk.count)
+        }
+    }
+
     private func digest() -> String {
         hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
@@ -325,63 +354,15 @@ private actor CandyTransferSource {
     func close() throws { try handle.close() }
 }
 
-private actor CandyUploadBudget {
-    private struct Waiter {
-        var id: UUID
-        var count: Int
-        var continuation: CheckedContinuation<Void, Error>
-    }
-    private var waiters: [Waiter] = []
-    private var tokens = 1_048_576.0
-    private var updated = Date()
-    private var pumpTask: Task<Void, Never>?
-
-    func acquire(_ count: Int) async throws {
-        try Task.checkCancellation()
-        guard count > 0, count <= 1_048_576 else { throw CandyTransferFailure.invalid("上传数据块超出速率预算。") }
-        let id = UUID()
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                waiters.append(Waiter(id: id, count: count, continuation: continuation))
-                if pumpTask == nil { pumpTask = Task { await pump() } }
-            }
-        } onCancel: {
-            Task { await self.cancel(id) }
-        }
-        try Task.checkCancellation()
-    }
-
-    private func cancel(_ id: UUID) {
-        if let index = waiters.firstIndex(where: { $0.id == id }) {
-            waiters.remove(at: index).continuation.resume(throwing: CancellationError())
-        }
-    }
-
-    private func pump() async {
-        while let first = waiters.first {
-            let now = Date()
-            tokens = min(1_048_576, tokens + max(0, now.timeIntervalSince(updated)) * 1_048_576)
-            updated = now
-            if tokens >= Double(first.count) {
-                tokens -= Double(first.count)
-                waiters.removeFirst().continuation.resume()
-            } else {
-                let delay = max(0.025, (Double(first.count) - tokens) / 1_048_576)
-                do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
-                catch {
-                    let pending = waiters
-                    waiters.removeAll()
-                    pending.forEach { $0.continuation.resume(throwing: error) }
-                }
-            }
-        }
-        pumpTask = nil
-    }
-}
+// MARK: - Engine
 
 @MainActor
 final class CandyReliableTransfer {
-    var send: ((CandyTransferEnvelope) -> Void)?
+    /// GET_PROVIDERS through the node gateway.
+    var findProviders: ((String) async throws -> [CandyCandidate])?
+    var sendSignal: ((CandySignal) -> Void)?
+    var iceServers: () -> [CandyICEServer] = { [] }
+    var isOnline: () -> Bool = { false }
     var changed: ((CandyPlazaFile, Double, String) -> Void)?
     var completed: ((CandyPlazaFile, URL) -> Void)?
     var failed: ((CandyPlazaFile?, String) -> Void)?
@@ -390,52 +371,29 @@ final class CandyReliableTransfer {
     private final class Job {
         let file: CandyPlazaFile
         let disk: CandyTransferDisk
-        var requestID = UUID().uuidString.lowercased()
-        var grant: CandyTransferGrant?
-        var generation = 0
         var task: Task<Void, Never>?
-        var retries = 0
-        var retryStarted = Date()
-        var lastProgress = Date()
-        var lastRequest = Date.distantPast
-        var status = "等待授权"
+        var peer: CandyRTCPeer?
         var lastUIUpdate = Date.distantPast
-        var forceRelay = false
-        var offset: Int64 = 0
-        var awaitingGrant = false
         init(file: CandyPlazaFile, folder: URL) {
             self.file = file
             disk = CandyTransferDisk(file: file, folder: folder)
         }
     }
-    private struct Publication: Sendable {
+    private struct Publication {
         var file: CandyPlazaFile
         var url: URL
-        var time: Date
-        var modified: Date?
+        var manifest: CandyTransferDisk.Manifest
+        var mime: String
     }
+
     private let folder: URL
-    private var jobs: [String: Job] = [:]
-    private var diskClosures: [String: Task<Void, Never>] = [:]
-    private var diskClosureVersions: [String: UUID] = [:]
-    private var publications: [String: Publication] = [:]
-    private var currentFileID: String?
-    private var authorized: [String: CandyTransferGrant] = [:]
-    private var recipients: [String: String] = [:]
-    private var peers: [String: CandyTransferPeer] = [:]
-    private var earlyCandidates: [String: [CandyTransferSignal.Candidate]] = [:]
-    private var uploads: [String: Task<Void, Never>] = [:]
-    private var uploadFiles: [String: String] = [:]
-    private var cancelledUploads: [String: Date] = [:]
-    private var iceServers: [CandyTransferICE] = []
-    private var gatewayEnabled = false
-    private var configured = false
-    private var connected = false
-    private var monitor: Task<Void, Never>?
-    private var lastSourceCheck = Date.distantPast
     private let factory: RTCPeerConnectionFactory
-    private let uploadBudget = CandyUploadBudget()
-    private let http = CandyTransferHTTP()
+    private var jobs: [String: Job] = [:]
+    private var publications: [String: Publication] = [:]
+    private var uploads: [String: CandyRTCPeer] = [:]
+    private var pendingAnswers: [String: CheckedContinuation<CandySignal, Error>] = [:]
+    private var wakeWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private let maxUploads = 2
 
     init(folder: URL) {
         self.folder = folder
@@ -447,955 +405,631 @@ final class CandyReliableTransfer {
         }
     }
 
-    func publish(_ file: CandyPlazaFile, url: URL) throws {
-        let attributes = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        guard Int64(attributes.fileSize ?? -1) == file.size else {
-            throw CandyTransferFailure.invalid("源歌曲在准备分享时发生变化。")
-        }
-        currentFileID = file.id
-        publications[file.id] = Publication(file: file, url: url, time: Date(), modified: attributes.contentModificationDate)
-        let held = Set(authorized.values.map { $0.file.id })
-        publications = publications.filter { $0.key == file.id || held.contains($0.key) || Date().timeIntervalSince($0.value.time) < 600 }
-        if publications.count > 64 {
-            let idle = publications.values.filter { $0.file.id != file.id && !held.contains($0.file.id) }
-                .sorted { $0.time < $1.time }
-            for item in idle.prefix(publications.count - 64) { publications.removeValue(forKey: item.file.id) }
-        }
+    // MARK: Publishing
+
+    func publish(_ file: CandyPlazaFile, url: URL, manifest: CandyTransferDisk.Manifest) {
+        // Switching songs: new requests go to the new file; running uploads keep their open source.
+        publications = [file.id: Publication(file: file, url: url, manifest: manifest, mime: Self.mime(for: url))]
     }
 
+    /// Privacy withdrawal: stop serving and drop running uploads.
     func withdraw() {
-        currentFileID = nil
         publications.removeAll()
-        for id in Array(authorized.keys) { closePeer(id) }
-        authorized.removeAll()
-        recipients.removeAll()
-        uploads.values.forEach { $0.cancel() }
-        uploads.removeAll()
-        uploadFiles.removeAll()
-        cancelledUploads.removeAll()
+        for session in Array(uploads.keys) { closeUpload(session) }
     }
 
-    func setConnected(_ value: Bool) {
-        guard connected != value else { return }
-        connected = value
-        if !value {
-            configured = false
-            monitor?.cancel()
-            monitor = nil
-            for id in Array(peers.keys) { closePeer(id) }
-            earlyCandidates.removeAll()
-            authorized.removeAll()
-            recipients.removeAll()
-            uploads.values.forEach { $0.cancel() }
-            uploads.removeAll()
-            uploadFiles.removeAll()
-            for job in jobs.values {
-                job.task?.cancel()
-                job.task = nil
-                parkDisk(job)
-                job.grant = nil
-                job.awaitingGrant = false
-                job.status = "等待重新连接"
-                changed?(job.file, progress(job), job.status)
+    // MARK: Network state
+
+    /// Wi-Fi ↔ cellular switches invalidate ICE paths: drop live peers now so
+    /// downloads resume from the last verified block instead of waiting for timeouts.
+    func networkChanged() {
+        for job in jobs.values { job.peer?.shutdown(CandyTransferFailure.network("网络已切换，正在重新连接")) }
+        for session in Array(uploads.keys) { closeUpload(session) }
+        wake()
+    }
+
+    func wake() {
+        let waiters = wakeWaiters
+        wakeWaiters.removeAll()
+        waiters.values.forEach { $0.resume() }
+    }
+
+    private func pause(_ seconds: Double) async {
+        let id = UUID()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            wakeWaiters[id] = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                self?.wakeWaiters.removeValue(forKey: id)?.resume()
             }
-        } else {
-            monitor = Task { @MainActor [weak self] in
-                while !Task.isCancelled {
-                    do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
-                    guard let self else { return }
-                    if Date().timeIntervalSince(self.lastSourceCheck) >= 10 {
-                        self.lastSourceCheck = Date()
-                        let snapshots = Array(self.publications.values)
-                        let invalid = await Task.detached(priority: .utility) {
-                            snapshots.compactMap { item -> String? in
-                                do {
-                                    let values = try item.url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-                                    return Int64(values.fileSize ?? -1) == item.file.size && values.contentModificationDate == item.modified ? nil : item.file.id
-                                } catch {
-                                    return item.file.id
-                                }
-                            }
-                        }.value
-                        for id in invalid where self.publications[id] != nil { self.sourceUnavailable(id) }
-                    }
-                    for peer in Array(self.peers.values) where peer.channel?.readyState != .open && !peer.eofSent {
-                        if Date().timeIntervalSince(peer.created) > 20 { peer.onFailure?("下载建连超过 20 秒，正在恢复。") }
-                    }
-                    for job in Array(self.jobs.values) {
-                        if let grant = job.grant, grant.expiresAt - Int64(Date().timeIntervalSince1970) < 60,
-                           Date().timeIntervalSince(job.lastRequest) > 15 {
-                            self.request(job)
-                        }
-                        if Date().timeIntervalSince(job.lastProgress) > 30, job.task == nil {
-                            self.retry(job, message: "下载连接无进展。")
-                        }
-                    }
-                    for (id, grant) in self.authorized where grant.expiresAt <= Int64(Date().timeIntervalSince1970) {
-                        self.closePeer(id)
-                        self.authorized.removeValue(forKey: id)
-                        self.recipients.removeValue(forKey: id)
-                    }
-                }
-            }
-            if configured { resumeRequests() }
         }
     }
 
-    func download(_ file: CandyPlazaFile) {
-        guard configured else {
-            failed?(file, "服务器尚未启用可靠下载，请先部署新版信令和网关。")
-            return
-        }
-        guard file.protocolVersion == 2, file.sha256?.count == 64, file.ownerId != nil else {
-            failed?(file, "发布者尚未准备好可靠分享，请更新双方 App 后重试。")
-            return
-        }
-        guard jobs[file.id] == nil else { return }
-        guard !jobs.values.contains(where: { $0.file.ownerId == file.ownerId && $0.file.sha256 == file.sha256 }) else {
-            failed?(file, "同一首歌曲正在下载，请等待原任务完成。")
-            return
-        }
-        guard jobs.count < 2 else {
-            failed?(file, "最多同时下载两首歌曲，请完成或取消后再试。")
-            return
-        }
-        let job = Job(file: file, folder: folder)
-        jobs[file.id] = job
-        changed?(file, 0, job.status)
-        request(job)
-    }
+    // MARK: Signalling
 
-    func cancel(_ fileID: String, clearPartial: Bool = false) {
-        guard let job = jobs.removeValue(forKey: fileID) else { return }
-        job.task?.cancel()
-        if let grant = job.grant {
-            closePeer(grant.id)
-        }
-        send?(CandyTransferEnvelope(type: "transfer-cancel", requestId: job.requestID, transferId: job.grant?.id))
-        parkDisk(job, clearPartial: clearPartial)
-        failed?(job.file, "下载已取消，断点保留 24 小时。")
-    }
-
-    func clearPartial(_ file: CandyPlazaFile) {
-        guard jobs[file.id] == nil else {
-            failed?(file, "请先取消下载再清除断点。")
-            return
-        }
-        parkDisk(Job(file: file, folder: folder), clearPartial: true) { [weak self] in
-            self?.failed?(file, "断点已清除，请重试下载。")
-        }
-    }
-
-    func handle(_ message: CandyTransferEnvelope) {
-        switch message.type {
-        case "config":
-            guard message.protocolVersion == 2 else { return }
-            iceServers = message.iceServers ?? []
-            gatewayEnabled = message.gatewayEnabled == true
-            configured = true
-            if connected { resumeRequests() }
-        case "transfer":
-            guard let grant = message.transfer,
-                  let job = jobs.values.first(where: { $0.requestID == message.requestId || $0.grant?.id == grant.id }),
-                  grant.file.id == job.file.id, grant.file.sha256 == job.file.sha256, grant.file.size == job.file.size,
-                  grant.file.ownerId == job.file.ownerId else { return }
-            if let requestID = message.requestId, requestID != job.requestID { return }
-            if let previous = job.grant?.generation, let incoming = grant.generation, incoming < previous { return }
-            let alreadyRunning = job.grant?.id == grant.id && (job.task != nil || peers[grant.id] != nil)
-            job.grant = grant
-            job.awaitingGrant = false
-            if !alreadyRunning {
-                if grant.mode == "relay" { receiveRelay(job) }
-                else if grant.mode == "p2p" { startPeer(job) }
-                else { fail(job, "服务器返回不支持的下载方式。") }
-            }
-        case "transfer-authorized":
-            guard let grant = message.transfer, let recipient = message.from,
-                  let publication = publications[grant.file.id],
-                  publication.file.sha256 == grant.file.sha256 else { return }
-            authorized[grant.id] = grant
-            recipients[grant.id] = recipient
-        case "upload-request":
-            guard let grant = message.transfer else { return }
-            upload(grant)
-        case "transfer-completed":
-            guard let id = message.transferId else { return }
-            closePeer(id)
-            authorized.removeValue(forKey: id)
-            recipients.removeValue(forKey: id)
-        case "transfer-error":
-            if let id = message.transferId, authorized[id] != nil {
-                closePeer(id)
-                authorized.removeValue(forKey: id)
-                recipients.removeValue(forKey: id)
-                failed?(nil, message.error ?? "发送授权已失效。")
-                return
-            }
-            guard let job = jobs.values.first(where: { $0.requestID == message.requestId || $0.grant?.id == message.transferId }) else {
-                failed?(nil, message.error ?? "服务器拒绝传输请求。")
-                return
-            }
-            fail(job, message.error ?? "服务器拒绝传输请求。")
-        case "transfer-revoked":
-            guard let id = message.transferId else { return }
-            closePeer(id)
-            authorized.removeValue(forKey: id)
-            recipients.removeValue(forKey: id)
-            uploads.removeValue(forKey: id)?.cancel()
-            cancelledUploads[id] = Date()
-            cancelledUploads = cancelledUploads.filter { Date().timeIntervalSince($0.value) < 7200 }
-            if cancelledUploads.count > 1024, let oldest = cancelledUploads.min(by: { $0.value < $1.value })?.key {
-                cancelledUploads.removeValue(forKey: oldest)
-            }
-            if let job = jobs.values.first(where: { $0.grant?.id == id }) {
-                fail(job, message.error ?? "发布者已撤销下载授权。")
-            }
-        case "signal":
-            do {
-                guard let data = message.data?.data(using: .utf8) else { throw CandyTransferFailure.invalid("连接信令缺少数据。") }
-                let signal = try JSONDecoder().decode(CandyTransferSignal.self, from: data)
-                guard signal.transferId == message.transferId, signal.generation == message.generation,
-                      let remote = message.from else { throw CandyTransferFailure.invalid("连接信令的任务身份不一致。") }
-                handleSignal(signal, remote: remote)
-            } catch { failed?(nil, "无法处理下载信令：\(error.localizedDescription)") }
+    func handle(_ signal: CandySignal) {
+        switch signal.kind {
+        case "offer": serve(signal)
+        case "answer": pendingAnswers.removeValue(forKey: signal.session)?.resume(returning: signal)
+        case "bye": closeUpload(signal.session)
         default: break
         }
     }
 
-    private func resumeRequests() {
-        for job in jobs.values where job.task == nil && job.grant == nil && !job.awaitingGrant { request(job) }
+    func signalFailed(session: String, error: String) {
+        let message = error == "unreachable" ? "对方已离线" : "信令失败：\(error)"
+        pendingAnswers.removeValue(forKey: session)?.resume(throwing: CandyTransferFailure.network(message))
     }
 
-    private func request(_ job: Job) {
-        guard connected, configured else { return }
-        job.lastRequest = Date()
-        job.awaitingGrant = true
-        if job.grant == nil { job.lastProgress = Date() }
-        job.status = "等待下载授权"
-        changed?(job.file, progress(job), job.status)
-        send?(CandyTransferEnvelope(type: "transfer-request", requestId: job.requestID, fileId: job.file.id,
-            to: job.file.ownerId, transferId: job.grant?.id, mode: job.forceRelay ? "relay" : nil))
-    }
-
-    private func progress(_ job: Job) -> Double {
-        job.file.size == 0 ? 0 : min(1, Double(job.offset) / Double(job.file.size))
-    }
-
-    private func fail(_ job: Job, _ message: String) {
-        guard jobs[job.file.id] === job else { return }
-        jobs.removeValue(forKey: job.file.id)
-        job.task?.cancel()
-        if let grant = job.grant {
-            closePeer(grant.id)
-        }
-        send?(CandyTransferEnvelope(type: "transfer-cancel", requestId: job.requestID, transferId: job.grant?.id))
-        parkDisk(job)
-        failed?(job.file, message)
-    }
-
-    private func retry(_ job: Job, message: String) {
-        guard jobs[job.file.id] === job else { return }
-        if let id = job.grant?.id { closePeer(id) }
-        job.task?.cancel()
-        job.task = nil
-        guard Date().timeIntervalSince(job.retryStarted) < 300 else {
-            fail(job, "\(message) 自动恢复超过 5 分钟，断点已保留，请手动重试。")
-            return
-        }
-        if gatewayEnabled { job.forceRelay = true }
-        job.retries += 1
-        job.status = "网络中断，正在恢复（\(job.retries)）"
-        changed?(job.file, progress(job), job.status)
-        job.task = Task { @MainActor [weak self] in
-            do {
-                try await job.disk.close()
-                let delay = min(30, pow(2, Double(min(job.retries - 1, 5)))) + Double.random(in: 0...0.5)
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                try Task.checkCancellation()
-                guard let self, self.jobs[job.file.id] === job else { return }
-                job.task = nil
-                if job.grant == nil {
-                    self.send?(CandyTransferEnvelope(type: "transfer-cancel", requestId: job.requestID))
-                }
-                job.requestID = UUID().uuidString.lowercased()
-                self.request(job)
-            } catch is CancellationError { return }
-            catch {
-                guard let self, self.jobs[job.file.id] === job else { return }
-                self.fail(job, "下载断点无法恢复：\(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func contentKey(_ file: CandyPlazaFile) -> String { "\(file.ownerId ?? ""):\(file.sha256 ?? file.id)" }
-
-    private func parkDisk(_ job: Job, clearPartial: Bool = false, completion: (() -> Void)? = nil) {
-        let key = contentKey(job.file)
-        let previous = diskClosures[key]
-        let version = UUID()
-        diskClosureVersions[key] = version
-        diskClosures[key] = Task { @MainActor in
-            defer {
-                if diskClosureVersions[key] == version {
-                    diskClosures.removeValue(forKey: key)
-                    diskClosureVersions.removeValue(forKey: key)
-                }
-            }
-            do {
-                if let previous { await previous.value }
-                if clearPartial { try await job.disk.clear() }
-                else { try await job.disk.close() }
-                completion?()
-            } catch { failed?(job.file, "保存下载断点失败：\(error.localizedDescription)") }
-        }
-    }
-
-    private func prepareDisk(_ job: Job) async throws -> Int64 {
-        if let closing = diskClosures[contentKey(job.file)] { await closing.value }
-        try Task.checkCancellation()
-        return try await job.disk.prepare()
-    }
-
-    private func finish(_ job: Job) async throws {
-        let destination = try await job.disk.finish()
-        guard jobs[job.file.id] === job, !Task.isCancelled else { return }
-        jobs.removeValue(forKey: job.file.id)
-        completed?(job.file, destination)
-        if let grant = job.grant {
-            if let peer = peers[grant.id] {
-                do { try peer.control(CandyTransferControl(type: "complete", offset: job.file.size, sha256: job.file.sha256)) }
-                catch { failed?(nil, "歌曲已校验保存，但点对点完成确认失败；正在通过信令确认：\(error.localizedDescription)") }
-            }
-            send?(CandyTransferEnvelope(type: "transfer-complete", transferId: grant.id))
-            closePeer(grant.id)
-        }
-    }
-
-    private func checkedURL(_ value: String?) throws -> URL {
-        guard let value, let url = URL(string: value), url.scheme == "https",
-              url.host == "music.webtrc.eu.cc", url.user == nil, url.password == nil,
-              url.port == nil || url.port == 443 else {
-            throw CandyTransferFailure.invalid("下载网关必须使用 music.webtrc.eu.cc 的 HTTPS 地址。")
-        }
-        return url
-    }
-
-    private func httpRequest(_ url: URL, token: String, method: String = "HEAD") -> URLRequest {
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.timeoutInterval = 30
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        return request
-    }
-
-    private func response(_ request: URLRequest, body: Data? = nil, limit: Int = 1_048_576) async throws -> (Data, HTTPURLResponse) {
-        try await http.response(request, body: body, limit: limit)
-    }
-
-    private func requireAuthorized(_ response: HTTPURLResponse) throws {
-        if [401, 403, 404, 410].contains(response.statusCode) {
-            throw CandyTransferFailure.invalid("下载授权已失效或发布者已离线。")
-        }
-        if response.statusCode >= 500 || response.statusCode == 429 {
-            throw CandyTransferFailure.network("下载网关繁忙，正在重试。")
-        }
-    }
-
-    private func receiveRelay(_ job: Job) {
-        guard let grant = job.grant else { return }
-        job.task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let url = try self.checkedURL(grant.downloadURL)
-                job.offset = try await self.prepareDisk(job)
-                while true {
-                    try Task.checkCancellation()
-                    let (_, head) = try await self.response(self.httpRequest(url, token: grant.token))
-                    try self.requireAuthorized(head)
-                    if head.statusCode == 200 { break }
-                    guard head.statusCode == 409 || head.statusCode == 425 || head.statusCode == 202 else {
-                        throw CandyTransferFailure.invalid("网关尚未准备好歌曲，HTTP \(head.statusCode)。")
-                    }
-                    guard Date().timeIntervalSince(job.retryStarted) < 300 else {
-                        throw CandyTransferFailure.invalid("发布者上传等待超过 5 分钟，请稍后重试。")
-                    }
-                    job.status = "等待发布者上传至临时中转"
-                    self.changed?(job.file, self.progress(job), job.status)
-                    try await Task.sleep(nanoseconds: 2_000_000_000)
-                }
-                while job.offset < job.file.size {
-                    try Task.checkCancellation()
-                    let end = min(job.file.size - 1, job.offset + 1_048_576 - 1)
-                    var request = self.httpRequest(url, token: grant.token, method: "GET")
-                    request.setValue("bytes=\(job.offset)-\(end)", forHTTPHeaderField: "Range")
-                    request.setValue("\"\(job.file.sha256 ?? "")\"", forHTTPHeaderField: "If-Match")
-                    let (data, result) = try await self.response(request)
-                    try self.requireAuthorized(result)
-                    guard result.statusCode == 206,
-                          result.value(forHTTPHeaderField: "Content-Range") == "bytes \(job.offset)-\(end)/\(job.file.size)",
-                          result.value(forHTTPHeaderField: "ETag") == "\"\(job.file.sha256 ?? "")\"",
-                          data.count == Int(end - job.offset + 1) else {
-                        throw CandyTransferFailure.invalid("网关断点或文件版本校验失败。")
-                    }
-                    _ = try await job.disk.append(data, at: job.offset)
-                    job.offset = try await job.disk.durableOffset()
-                    job.lastProgress = Date()
-                    job.retries = 0
-                    job.retryStarted = Date()
-                    self.changed?(job.file, self.progress(job), "中转下载中")
-                }
-                self.changed?(job.file, self.progress(job), "正在校验歌曲")
-                try await self.finish(job)
-            } catch is CancellationError { return }
-            catch {
-                guard self.jobs[job.file.id] === job else { return }
-                job.task = nil
-                if self.retryable(error) { self.retry(job, message: error.localizedDescription) }
-                else { self.fail(job, error.localizedDescription) }
-            }
-        }
-    }
-
-    private func retryable(_ error: Error) -> Bool {
-        if let failure = error as? CandyTransferFailure { return failure.retryable }
-        return error is URLError
-    }
-
-    private func upload(_ grant: CandyTransferGrant) {
-        guard cancelledUploads[grant.id] == nil, uploads[grant.id] == nil else { return }
-        guard let publication = publications[grant.file.id],
-              publication.file.sha256 == grant.file.sha256, publication.file.size == grant.file.size else {
-            send?(CandyTransferEnvelope(type: "upload-error", transferId: grant.id, error: "Source snapshot is unavailable."))
-            failed?(nil, "中转请求的源歌曲已不可用。")
-            return
-        }
-        guard uploads.count < 1 else {
-            send?(CandyTransferEnvelope(type: "upload-error", transferId: grant.id, error: "Publisher upload is busy."))
-            failed?(nil, "中转上传已满，请稍后重试。")
-            return
-        }
-        uploadFiles[grant.id] = grant.file.id
-        uploads[grant.id] = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.uploads.removeValue(forKey: grant.id)
-                self.uploadFiles.removeValue(forKey: grant.id)
-            }
-            var source: CandyTransferSource?
-            do {
-                let url = try self.checkedURL(grant.uploadURL)
-                let manifest = try await CandyTransferDisk.manifest(publication.url)
-                guard manifest.sha256 == grant.file.sha256, manifest.size == grant.file.size else {
-                    throw CandyTransferFailure.source("源歌曲已变更，无法继续中转上传。")
-                }
-                let input = try CandyTransferSource(url: publication.url)
-                source = input
-                var retries = 0
-                let deadline = Date().addingTimeInterval(300)
-                while true {
-                    try Task.checkCancellation()
-                    do {
-                        let (_, head) = try await self.response(self.httpRequest(url, token: grant.token))
-                        try self.requireAuthorized(head)
-                        guard head.statusCode == 200 || head.statusCode == 204,
-                              let rawOffset = head.value(forHTTPHeaderField: "Upload-Offset"),
-                              let offset = Int64(rawOffset), offset >= 0, offset <= grant.file.size else {
-                            throw CandyTransferFailure.invalid("中转上传断点无效。")
-                        }
-                        if offset == grant.file.size { break }
-                        let data = try await input.read(offset: offset, count: Int(min(1_048_576, grant.file.size - offset)))
-                        guard !data.isEmpty else { throw CandyTransferFailure.source("源歌曲已不可读取。") }
-                        try await self.uploadBudget.acquire(data.count)
-                        var request = self.httpRequest(url, token: grant.token, method: "PUT")
-                        request.setValue("bytes \(offset)-\(offset + Int64(data.count) - 1)/\(grant.file.size)", forHTTPHeaderField: "Content-Range")
-                        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-                        let (_, result) = try await self.response(request, body: data, limit: 65_536)
-                        try self.requireAuthorized(result)
-                        guard [200, 201, 204, 409].contains(result.statusCode) else {
-                            throw CandyTransferFailure.invalid("中转上传失败，HTTP \(result.statusCode)。")
-                        }
-                        retries = 0
-                        // A single relay upload and two P2P senders have independent bounded pacing.
-                        try await Task.sleep(nanoseconds: 1_000_000_000)
-                    } catch {
-                        guard self.retryable(error), Date() < deadline else { throw error }
-                        retries += 1
-                        let delay = min(30, pow(2, Double(min(retries - 1, 5))))
-                        try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    }
-                }
-                try await input.close()
-                source = nil
-            } catch is CancellationError {
-                if let source { try? await source.close() }
-            } catch {
-                if let source { try? await source.close() }
-                self.failed?(nil, "歌曲中转上传失败：\(error.localizedDescription)")
-                self.send?(CandyTransferEnvelope(type: "upload-error", transferId: grant.id, error: "Publisher upload failed."))
-                if self.isSourceFailure(error) { self.sourceUnavailable(grant.file.id) }
-            }
-        }
-    }
-
-    private func startPeer(_ job: Job) {
-        guard let grant = job.grant, let remote = grant.file.ownerId else { return }
-        guard let generation = grant.generation, generation > 0 else {
-            fail(job, "服务器没有提供有效的连接代次。")
-            return
-        }
-        job.generation = generation
-        let peer = makePeer(grant: grant, remote: remote, generation: job.generation, serving: false)
-        let config = RTCDataChannelConfiguration()
-        config.isOrdered = true
-        guard let channel = peer.connection?.dataChannel(forLabel: "file-v2:\(grant.id)", configuration: config) else {
-            retry(job, message: "无法创建可靠文件通道。")
-            return
-        }
-        peer.attach(channel)
-        peer.connection?.offer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { [weak self, weak peer] description, error in
-            Task { @MainActor in
-                guard let self, let peer, self.peers[grant.id] === peer else { return }
-                guard let description else { self.retry(job, message: error?.localizedDescription ?? "创建连接失败。"); return }
-                peer.connection?.setLocalDescription(description) { error in
-                    Task { @MainActor in
-                        guard self.peers[grant.id] === peer else { return }
-                        if let error { self.retry(job, message: error.localizedDescription); return }
-                        self.signal(peer, kind: "offer", description: description)
-                    }
-                }
-            }
-        }
-    }
-
-    private func makePeer(grant: CandyTransferGrant, remote: String, generation: Int, serving: Bool) -> CandyTransferPeer {
-        closePeer(grant.id)
-        let peer = CandyTransferPeer(id: grant.id, fileID: grant.file.id, remote: remote, generation: generation, serving: serving)
+    private func makePeer(session: String, remote: String) -> CandyRTCPeer {
+        let peer = CandyRTCPeer(session: session, remote: remote)
         let configuration = RTCConfiguration()
-        configuration.iceServers = iceServers.map { server in
+        configuration.iceServers = iceServers().map { server in
             if let username = server.username, let credential = server.credential {
                 return RTCIceServer(urlStrings: server.urls, username: username, credential: credential)
             }
             return RTCIceServer(urlStrings: server.urls)
         }
+        configuration.sdpSemantics = .unifiedPlan
         peer.connection = factory.peerConnection(with: configuration,
             constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: peer)
-        peers[grant.id] = peer
-        let candidateKey = "\(grant.id):\(generation)"
-        for candidate in earlyCandidates.removeValue(forKey: candidateKey) ?? [] {
-            peer.add(RTCIceCandidate(sdp: candidate.candidate, sdpMLineIndex: candidate.sdpMLineIndex, sdpMid: candidate.sdpMid))
-        }
-        peer.onCandidate = { [weak self, weak peer] candidate in
-            guard let self, let peer, self.peers[peer.id] === peer else { return }
-            self.signal(peer, kind: "candidate", candidate: candidate)
-        }
-        peer.onOpen = { [weak self, weak peer] in
-            guard let self, let peer, self.peers[peer.id] === peer else { return }
-            if !serving, let job = self.jobs[grant.file.id] {
-                Task { @MainActor in
-                    do {
-                        job.offset = try await self.prepareDisk(job)
-                        guard self.peers[peer.id] === peer else { return }
-                        try peer.control(CandyTransferControl(type: "resume", offset: job.offset, size: job.file.size, sha256: job.file.sha256))
-                        job.lastProgress = Date()
-                        self.changed?(job.file, self.progress(job), "点对点下载中")
-                    } catch { self.fail(job, error.localizedDescription) }
-                }
-            }
-        }
-        peer.onData = { [weak self, weak peer] buffer in
-            guard let self, let peer, self.peers[peer.id] === peer else { return }
-            await self.receive(buffer, peer: peer, grant: grant)
-        }
-        peer.onFailure = { [weak self, weak peer] message in
-            guard let self, let peer, self.peers[peer.id] === peer else { return }
-            if !serving, let job = self.jobs[grant.file.id] { self.retry(job, message: message) }
-            else { self.closePeer(peer.id); self.failed?(nil, message) }
-        }
         return peer
     }
 
-    private func signal(_ peer: CandyTransferPeer, kind: String, description: RTCSessionDescription? = nil, candidate: RTCIceCandidate? = nil) {
-        let signal = CandyTransferSignal(kind: kind, transferId: peer.id, fileId: peer.fileID, generation: peer.generation,
-            sdp: description.map { .init(type: kind, sdp: $0.sdp) },
-            candidate: candidate.map { .init(candidate: $0.sdp, sdpMid: $0.sdpMid, sdpMLineIndex: $0.sdpMLineIndex) })
-        do {
-            let data = try JSONEncoder().encode(signal)
-            send?(CandyTransferEnvelope(type: "signal", to: peer.remote, transferId: peer.id,
-                generation: peer.generation, data: String(decoding: data, as: UTF8.self)))
-        } catch { peer.onFailure?("无法编码连接信令：\(error.localizedDescription)") }
-    }
+    // MARK: Serving (sender side)
 
-    private func handleSignal(_ signal: CandyTransferSignal, remote: String) {
-        if signal.kind == "candidate", peers[signal.transferId] == nil, let candidate = signal.candidate {
-            guard authorized[signal.transferId] != nil || jobs.values.contains(where: { $0.grant?.id == signal.transferId }) else { return }
-            let key = "\(signal.transferId):\(signal.generation)"
-            guard earlyCandidates.count < 64, (earlyCandidates[key]?.count ?? 0) < 128 else {
-                failed?(nil, "连接候选缓存超过限制。")
-                return
-            }
-            earlyCandidates[key, default: []].append(candidate)
-            return
-        }
-        let peer: CandyTransferPeer
-        if signal.kind == "offer" {
-            guard let grant = authorized[signal.transferId], recipients[signal.transferId] == remote,
-                  grant.file.id == signal.fileId, grant.generation == signal.generation,
-                  grant.expiresAt > Int64(Date().timeIntervalSince1970) else { return }
-            if let previous = peers[grant.id], previous.generation >= signal.generation { return }
-            guard peers.values.filter({ $0.serving }).count < 2 || peers[grant.id] != nil else {
-                failed?(nil, "发送并发超过授权上限。")
-                return
-            }
-            peer = makePeer(grant: grant, remote: remote, generation: signal.generation, serving: true)
-        } else {
-            guard let existing = peers[signal.transferId], existing.remote == remote,
-                  existing.generation == signal.generation, existing.fileID == signal.fileId else { return }
-            peer = existing
-        }
-        if let candidate = signal.candidate, signal.kind == "candidate" {
-            peer.add(RTCIceCandidate(sdp: candidate.candidate, sdpMLineIndex: candidate.sdpMLineIndex, sdpMid: candidate.sdpMid))
-            return
-        }
-        guard let description = signal.sdp, signal.kind == "offer" || signal.kind == "answer" else { return }
-        peer.connection?.setRemoteDescription(RTCSessionDescription(type: signal.kind == "offer" ? .offer : .answer, sdp: description.sdp)) { [weak self, weak peer] error in
-            Task { @MainActor in
-                guard let self, let peer, self.peers[peer.id] === peer else { return }
-                if let error { peer.onFailure?(error.localizedDescription); return }
-                peer.remoteDescriptionReady()
-                guard signal.kind == "offer" else { return }
-                peer.connection?.answer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { answer, error in
-                    Task { @MainActor in
-                        guard self.peers[peer.id] === peer else { return }
-                        guard let answer else { peer.onFailure?(error?.localizedDescription ?? "无法响应下载连接。"); return }
-                        peer.connection?.setLocalDescription(answer) { error in
-                            Task { @MainActor in
-                                guard self.peers[peer.id] === peer else { return }
-                                if let error { peer.onFailure?(error.localizedDescription); return }
-                                self.signal(peer, kind: "answer", description: answer)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func receive(_ buffer: RTCDataBuffer, peer: CandyTransferPeer, grant: CandyTransferGrant) async {
-        do {
-            guard buffer.data.count <= 16_384 else { throw CandyTransferFailure.invalid("传输消息超出大小限制。") }
-            if peer.serving {
-                guard !buffer.isBinary else { throw CandyTransferFailure.invalid("发送端收到非预期的二进制数据。") }
-                let control = try JSONDecoder().decode(CandyTransferControl.self, from: buffer.data)
-                switch control.type {
-                case "resume":
-                    guard peer.worker == nil, control.sha256 == grant.file.sha256, control.size == grant.file.size,
-                          let offset = control.offset, offset >= 0, offset <= grant.file.size else {
-                        throw CandyTransferFailure.invalid("下载续传请求无效。")
-                    }
-                    peer.acknowledged = offset
-                    transmit(peer, grant: grant, offset: offset)
-                case "ack":
-                    guard let offset = control.offset, offset >= peer.acknowledged, offset <= peer.sentOffset else {
-                        throw CandyTransferFailure.invalid("下载确认断点越界。")
-                    }
-                    peer.acknowledged = offset
-                    peer.lastProgress = Date()
-                case "complete":
-                    guard control.sha256 == grant.file.sha256, control.offset == grant.file.size else {
-                        throw CandyTransferFailure.invalid("下载完成确认无效。")
-                    }
-                    closePeer(peer.id)
-                    authorized.removeValue(forKey: peer.id)
-                    recipients.removeValue(forKey: peer.id)
-                default: throw CandyTransferFailure.invalid("无法识别下载控制消息。")
-                }
-            } else {
-                guard let job = jobs[grant.file.id], job.grant?.id == peer.id else { return }
-                if buffer.isBinary {
-                    guard buffer.data.count > 8 else { throw CandyTransferFailure.invalid("文件分片缺少内容。") }
-                    let offset = buffer.data.prefix(8).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
-                    guard offset <= UInt64(Int64.max) else { throw CandyTransferFailure.invalid("文件断点越界。") }
-                    let bytes = Data(buffer.data.dropFirst(8))
-                    let durable = try await job.disk.append(bytes, at: Int64(offset))
-                    guard peers[peer.id] === peer else { return }
-                    job.offset = Int64(offset) + Int64(bytes.count)
-                    job.lastProgress = Date()
-                    job.retryStarted = Date()
-                    job.retries = 0
-                    if let durable { try peer.control(CandyTransferControl(type: "ack", offset: durable)) }
-                    if Date().timeIntervalSince(job.lastUIUpdate) >= 0.1 || job.offset == job.file.size {
-                        job.lastUIUpdate = Date()
-                        changed?(job.file, progress(job), "点对点下载中")
-                    }
-                } else {
-                    let control = try JSONDecoder().decode(CandyTransferControl.self, from: buffer.data)
-                    switch control.type {
-                    case "meta":
-                        guard control.size == job.file.size, control.sha256 == job.file.sha256 else {
-                            throw CandyTransferFailure.invalid("发送端歌曲版本不一致。")
-                        }
-                    case "eof":
-                        changed?(job.file, progress(job), "正在校验歌曲")
-                        try await finish(job)
-                    case "error": throw CandyTransferFailure.invalid(control.error ?? "发布者无法继续发送歌曲。")
-                    default: throw CandyTransferFailure.invalid("无法识别文件传输消息。")
-                    }
-                }
-            }
-        } catch {
-            if !peer.serving, let job = jobs[grant.file.id] { fail(job, error.localizedDescription) }
-            else {
-                try? peer.control(CandyTransferControl(type: "error", error: error.localizedDescription))
-                closePeer(peer.id)
-                failed?(nil, "歌曲发送失败：\(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func transmit(_ peer: CandyTransferPeer, grant: CandyTransferGrant, offset: Int64) {
-        guard let publication = publications[grant.file.id] else { peer.onFailure?("源歌曲已不可用。"); return }
-        peer.worker = Task { @MainActor [weak self, weak peer] in
+    private func serve(_ offer: CandySignal) {
+        guard let remote = offer.from, let sdp = offer.sdp, uploads[offer.session] == nil, uploads.count < maxUploads,
+              !publications.isEmpty else { return }
+        let peer = makePeer(session: offer.session, remote: remote)
+        guard let connection = peer.connection else { return }
+        uploads[offer.session] = peer
+        peer.onChannel = { [weak self, weak peer] channel in
             guard let self, let peer else { return }
-            var source: CandyTransferSource?
+            guard channel.label == candyChannelLabel, peer.attach(channel) else { channel.close(); return }
+            Task { @MainActor in await self.runUpload(peer) }
+        }
+        Task { @MainActor [weak self] in
             do {
-                let manifest = try await CandyTransferDisk.manifest(publication.url)
-                guard manifest.sha256 == grant.file.sha256, manifest.size == grant.file.size else {
-                    throw CandyTransferFailure.source("分享文件已变更，下载已停止。")
-                }
-                let input = try CandyTransferSource(url: publication.url)
-                source = input
-                try peer.control(CandyTransferControl(type: "meta", size: grant.file.size, sha256: grant.file.sha256))
-                peer.sentOffset = offset
-                peer.lastProgress = Date()
-                let started = Date()
-                while peer.sentOffset < grant.file.size {
-                    try Task.checkCancellation()
-                    guard self.peers[peer.id] === peer, self.authorized[peer.id] != nil,
-                          (self.authorized[peer.id]?.expiresAt ?? 0) > Int64(Date().timeIntervalSince1970),
-                          peer.channel?.readyState == .open else { throw CandyTransferFailure.network("发送连接已关闭。") }
-                    while peer.sentOffset - peer.acknowledged >= 1_048_576 || (peer.channel?.bufferedAmount ?? 0) > 524_288 {
-                        try Task.checkCancellation()
-                        guard Date().timeIntervalSince(peer.lastProgress) < 30 else { throw CandyTransferFailure.network("下载确认超时。") }
-                        try await Task.sleep(nanoseconds: 25_000_000)
+                try await connection.candyApplyRemote(RTCSessionDescription(type: .offer, sdp: sdp))
+                let answer = try await connection.candyAnswer()
+                try await connection.candyApplyLocal(answer)
+                await peer.gathering.wait(seconds: 5)
+                guard let self, self.uploads[offer.session] === peer, let local = connection.localDescription?.sdp else { return }
+                self.sendSignal?(CandySignal(to: remote, node: offer.fromNode, nodeAddrs: offer.fromNodeAddrs,
+                    session: offer.session, kind: "answer", sdp: local))
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                if !peer.channelOpen.isSucceeded { self.closeUpload(offer.session) }
+            } catch {
+                self?.closeUpload(offer.session)
+            }
+        }
+    }
+
+    private func runUpload(_ peer: CandyRTCPeer) async {
+        var source: CandyTransferSource?
+        var servedID: String?
+        do {
+            try await peer.channelOpen.wait(seconds: 20, failure: CandyTransferFailure.network("文件通道未打开。"))
+            guard case .text(let text) = try await peer.inbox.next(timeout: 30),
+                  let request = try? JSONDecoder().decode(CandyWireMessage.self, from: Data(text.utf8)),
+                  request.t == "get", let cid = request.cid, let offset = request.offset else {
+                try peer.sendControl(CandyWireMessage(t: "error", error: "bad-request"))
+                throw CandyTransferFailure.invalid("下载请求无效。")
+            }
+            guard let publication = publications[cid] else {
+                try peer.sendControl(CandyWireMessage(t: "error", error: "not-found"))
+                throw CandyTransferFailure.invalid("请求的文件已停止分享。")
+            }
+            servedID = cid
+            let size = publication.manifest.size
+            guard offset >= 0, offset <= size, offset % Int64(candyBlockSize) == 0 else {
+                try peer.sendControl(CandyWireMessage(t: "error", error: "bad-request"))
+                throw CandyTransferFailure.invalid("续传位置无效。")
+            }
+            let input = try CandyTransferSource(url: publication.url)
+            source = input
+            try peer.sendControl(CandyWireMessage(t: "meta", cid: cid, size: size, name: publication.file.name,
+                mime: publication.mime, blockSize: candyBlockSize, blocks: publication.manifest.blocks))
+            var position = offset
+            while position < size {
+                let expected = Int(min(Int64(candyBlockSize), size - position))
+                let block = try await input.read(offset: position, count: expected)
+                guard block.count == expected else { throw CandyTransferFailure.source("源歌曲被删除或截断。") }
+                var index = 0
+                while index < block.count {
+                    while (peer.channel?.bufferedAmount ?? 0) > 8_388_608 {
+                        guard peer.channel?.readyState == .open else { throw CandyTransferFailure.network("发送连接已关闭。") }
+                        try await Task.sleep(nanoseconds: 10_000_000)
                     }
-                    let data = try await input.read(offset: peer.sentOffset, count: Int(min(16_376, grant.file.size - peer.sentOffset)))
-                    guard !data.isEmpty else { throw CandyTransferFailure.source("源歌曲被删除或截断。") }
-                    var value = UInt64(peer.sentOffset).bigEndian
-                    var frame = withUnsafeBytes(of: &value) { Data($0) }
-                    frame.append(data)
-                    try await self.uploadBudget.acquire(frame.count)
-                    guard peer.channel?.sendData(RTCDataBuffer(data: frame, isBinary: true)) == true else {
+                    let end = min(index + candyChunkSize, block.count)
+                    guard peer.channel?.readyState == .open,
+                          peer.channel?.sendData(RTCDataBuffer(data: block.subdata(in: index..<end), isBinary: true)) == true else {
                         throw CandyTransferFailure.network("文件分片发送失败。")
                     }
-                    peer.sentOffset += Int64(data.count)
-                    let delay = Double(peer.sentOffset - offset) / 524_288 - Date().timeIntervalSince(started)
-                    if delay > 0 { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+                    index = end
                 }
-                while peer.acknowledged < grant.file.size {
+                position += Int64(block.count)
+            }
+            try peer.sendControl(CandyWireMessage(t: "end"))
+            guard case .text(let reply) = try await peer.inbox.next(timeout: 120),
+                  (try? JSONDecoder().decode(CandyWireMessage.self, from: Data(reply.utf8)))?.t == "done" else {
+                throw CandyTransferFailure.network("接收方未确认完成。")
+            }
+        } catch {
+            if case CandyTransferFailure.source = error, let servedID { publicationUnavailable?(servedID) }
+        }
+        if let source { try? await source.close() }
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        closeUpload(peer.session)
+    }
+
+    private func closeUpload(_ session: String) {
+        guard let peer = uploads.removeValue(forKey: session) else { return }
+        peer.shutdown(CandyTransferFailure.network("上传已结束。"))
+    }
+
+    // MARK: Downloading (receiver side)
+
+    func download(_ file: CandyPlazaFile) {
+        guard jobs[file.id] == nil else { return }
+        let job = Job(file: file, folder: folder)
+        jobs[file.id] = job
+        changed?(file, 0, "DHT 查询提供者…")
+        job.task = Task { @MainActor [weak self] in await self?.run(job) }
+    }
+
+    func cancel(_ fileID: String) {
+        guard let job = jobs.removeValue(forKey: fileID) else { return }
+        job.task?.cancel()
+        job.peer?.shutdown(CancellationError())
+        wake()
+        failed?(job.file, "已取消，可重试或清除断点。")
+    }
+
+    func clearPartial(_ file: CandyPlazaFile) {
+        let job = jobs.removeValue(forKey: file.id)
+        job?.task?.cancel()
+        job?.peer?.shutdown(CancellationError())
+        let disk = job?.disk ?? CandyTransferDisk(file: file, folder: folder)
+        Task { @MainActor [weak self] in
+            do { try await disk.clear() }
+            catch { self?.failed?(file, "无法清除断点：\(error.localizedDescription)") }
+        }
+    }
+
+    private func report(_ job: Job, _ offset: Int64, _ status: String, force: Bool = true) {
+        guard jobs[job.file.id] === job else { return }
+        guard force || Date().timeIntervalSince(job.lastUIUpdate) >= 0.25 else { return }
+        job.lastUIUpdate = Date()
+        changed?(job.file, job.file.size > 0 ? Double(offset) / Double(job.file.size) : 0, status)
+    }
+
+    private func run(_ job: Job) async {
+        let deadline = Date().addingTimeInterval(600)
+        var delay = 1.0
+        do {
+            var offset = try await job.disk.prepare()
+            if await job.disk.isCompleted {
+                let url = try await job.disk.finish()
+                complete(job, url)
+                return
+            }
+            while Date() < deadline {
+                try Task.checkCancellation()
+                guard isOnline() else {
+                    report(job, offset, "网络断开，等待重连…")
+                    await pause(2)
+                    continue
+                }
+                report(job, offset, "DHT 查询提供者（GET_PROVIDERS）…")
+                let candidates = (try? await findProviders?(job.file.id)) ?? []
+                try Task.checkCancellation()
+                if candidates.isEmpty { report(job, offset, "暂无在线提供者，稍后重试…") }
+                for candidate in candidates {
                     try Task.checkCancellation()
-                    guard Date().timeIntervalSince(peer.lastProgress) < 30 else { throw CandyTransferFailure.network("文件落盘确认超时。") }
-                    try await Task.sleep(nanoseconds: 25_000_000)
+                    do {
+                        let url = try await attempt(job, candidate)
+                        complete(job, url)
+                        return
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        try Task.checkCancellation()
+                        offset = try await job.disk.durableOffset()
+                        let resumed = offset - offset % Int64(candyBlockSize)
+                        report(job, offset, "\(error.localizedDescription)，将从 \(resumed / 1_048_576) MB 处续传")
+                    }
                 }
-                try peer.control(CandyTransferControl(type: "eof", size: grant.file.size, sha256: grant.file.sha256))
-                peer.eofSent = true
-                try await input.close()
-                source = nil
-                let deadline = Date().addingTimeInterval(30)
-                while self.peers[peer.id] === peer {
-                    try Task.checkCancellation()
-                    guard Date() < deadline else { throw CandyTransferFailure.network("歌曲完成确认超时。") }
-                    try await Task.sleep(nanoseconds: 100_000_000)
+                await pause(delay * Double.random(in: 0.75...1.25))
+                delay = min(30, delay * 2)
+            }
+            try Task.checkCancellation()
+            try await job.disk.close()
+            fail(job, "提供者长时间不可达，断点已保留，可稍后重试。")
+        } catch is CancellationError {
+            try? await job.disk.close()
+        } catch {
+            try? await job.disk.close()
+            fail(job, error.localizedDescription)
+        }
+    }
+
+    private func complete(_ job: Job, _ url: URL) {
+        guard jobs[job.file.id] === job else { return }
+        jobs.removeValue(forKey: job.file.id)
+        completed?(job.file, url)
+    }
+
+    private func fail(_ job: Job, _ message: String) {
+        guard jobs[job.file.id] === job else { return }
+        jobs.removeValue(forKey: job.file.id)
+        failed?(job.file, message)
+    }
+
+    /// One provider: offer → answer via the nodes, then the file protocol on a direct DataChannel.
+    private func attempt(_ job: Job, _ candidate: CandyCandidate) async throws -> URL {
+        let session = UUID().uuidString.lowercased()
+        let peer = makePeer(session: session, remote: candidate.peerId)
+        job.peer = peer
+        defer {
+            peer.shutdown(CandyTransferFailure.network("连接已结束。"))
+            if job.peer === peer { job.peer = nil }
+        }
+        let config = RTCDataChannelConfiguration()
+        config.isOrdered = true
+        guard let connection = peer.connection,
+              let channel = connection.dataChannel(forLabel: candyChannelLabel, configuration: config), peer.attach(channel) else {
+            throw CandyTransferFailure.network("无法创建文件通道。")
+        }
+        let startOffset = try await job.disk.durableOffset()
+        report(job, startOffset, "连接 …\(candidate.peerId.suffix(8))")
+        let offer = try await connection.candyOffer()
+        try await connection.candyApplyLocal(offer)
+        await peer.gathering.wait(seconds: 5)
+        guard let local = connection.localDescription?.sdp else { throw CandyTransferFailure.network("无法生成连接描述。") }
+        let answer: CandySignal = try await withCheckedThrowingContinuation { continuation in
+            pendingAnswers[session] = continuation
+            sendSignal?(CandySignal(to: candidate.peerId, node: candidate.node, nodeAddrs: candidate.nodeAddrs,
+                session: session, kind: "offer", sdp: local))
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                self?.pendingAnswers.removeValue(forKey: session)?.resume(throwing: CandyTransferFailure.network("对方未应答"))
+            }
+        }
+        guard answer.from == candidate.peerId, let remoteSDP = answer.sdp else { throw CandyTransferFailure.network("应答来源不符。") }
+        try await connection.candyApplyRemote(RTCSessionDescription(type: .answer, sdp: remoteSDP))
+        try await peer.channelOpen.wait(seconds: 20, failure: CandyTransferFailure.network("点对点连接超时（可能需要 TURN）"))
+
+        // Resume only at verified block boundaries.
+        var position = try await job.disk.durableOffset()
+        let aligned = position - position % Int64(candyBlockSize)
+        if aligned != position {
+            try await job.disk.rewind(to: aligned)
+            position = aligned
+        }
+        try peer.sendControl(CandyWireMessage(t: "get", cid: job.file.id, offset: position))
+        guard case .text(let first) = try await peer.inbox.next(timeout: 30),
+              let meta = try? JSONDecoder().decode(CandyWireMessage.self, from: Data(first.utf8)) else {
+            throw CandyTransferFailure.network("对方协议不兼容。")
+        }
+        if meta.t == "error" { throw CandyTransferFailure.network("对方拒绝：\(meta.error ?? "unknown")") }
+        let size = job.file.size
+        let expectedBlocks = Int((size + Int64(candyBlockSize) - 1) / Int64(candyBlockSize))
+        guard meta.t == "meta", meta.cid == job.file.id, meta.size == size, meta.blockSize == candyBlockSize,
+              let blocks = meta.blocks, blocks.count == expectedBlocks else {
+            throw CandyTransferFailure.invalid("对方返回的文件描述与广场信息不一致。")
+        }
+        report(job, position, "点对点传输中")
+        var blockIndex = Int(position / Int64(candyBlockSize))
+        var blockHasher = SHA256()
+        var inBlock = 0
+        receiving: while true {
+            switch try await peer.inbox.next(timeout: 30) {
+            case .text(let text):
+                let control = try? JSONDecoder().decode(CandyWireMessage.self, from: Data(text.utf8))
+                if control?.t == "end" { break receiving }
+                throw CandyTransferFailure.network("传输被中止：\(control?.error ?? "unknown")")
+            case .binary(let data):
+                guard data.count <= candyChunkSize * 4, position + Int64(data.count) <= size else {
+                    throw CandyTransferFailure.invalid("收到越界数据。")
                 }
-            } catch is CancellationError {
-                if let source { try? await source.close() }
-            } catch {
-                if let source { try? await source.close() }
-                guard self.peers[peer.id] === peer else { return }
-                try? peer.control(CandyTransferControl(type: "error", error: error.localizedDescription))
-                self.closePeer(peer.id)
-                self.failed?(nil, "歌曲发送失败：\(error.localizedDescription)")
-                if self.isSourceFailure(error) { self.sourceUnavailable(grant.file.id) }
+                var cursor = data.startIndex
+                while cursor < data.endIndex {
+                    let blockLength = Int(min(Int64(candyBlockSize), size - Int64(blockIndex) * Int64(candyBlockSize)))
+                    let take = min(blockLength - inBlock, data.endIndex - cursor)
+                    let piece = Data(data[cursor..<(cursor + take)])
+                    blockHasher.update(data: piece)
+                    try await job.disk.append(piece, at: position)
+                    position += Int64(take)
+                    inBlock += take
+                    cursor += take
+                    if inBlock == blockLength {
+                        let digest = blockHasher.finalize().map { String(format: "%02x", $0) }.joined()
+                        guard digest == blocks[blockIndex] else {
+                            try await job.disk.rewind(to: Int64(blockIndex) * Int64(candyBlockSize))
+                            throw CandyTransferFailure.invalid("第 \(blockIndex + 1) 块校验失败，换源重试")
+                        }
+                        blockIndex += 1
+                        inBlock = 0
+                        blockHasher = SHA256()
+                    }
+                }
+                report(job, position, "点对点传输中", force: false)
+            }
+        }
+        guard position == size else { throw CandyTransferFailure.network("文件不完整。") }
+        let url: URL
+        do { url = try await job.disk.finish() }
+        catch {
+            try? await job.disk.clear()
+            _ = try? await job.disk.prepare()
+            try? peer.sendControl(CandyWireMessage(t: "error", error: "hash-mismatch"))
+            throw error
+        }
+        try? peer.sendControl(CandyWireMessage(t: "done"))
+        return url
+    }
+
+    private static func mime(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "mp3": return "audio/mpeg"
+        case "m4a", "m4b", "aac": return "audio/mp4"
+        case "flac": return "audio/flac"
+        case "wav": return "audio/wav"
+        case "ogg", "oga", "opus": return "audio/ogg"
+        default: return "application/octet-stream"
+        }
+    }
+}
+
+// MARK: - WebRTC helpers
+
+private extension RTCPeerConnection {
+    func candyOffer() async throws -> RTCSessionDescription {
+        try await withCheckedThrowingContinuation { continuation in
+            offer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { description, error in
+                if let description { continuation.resume(returning: description) }
+                else { continuation.resume(throwing: error ?? CandyTransferFailure.network("创建连接失败。")) }
             }
         }
     }
 
-    private func closePeer(_ id: String) {
-        earlyCandidates = earlyCandidates.filter { !$0.key.hasPrefix("\(id):") }
-        guard let peer = peers.removeValue(forKey: id) else { return }
-        peer.worker?.cancel()
-        peer.channel?.close()
-        peer.connection?.close()
-    }
-
-    private func sourceUnavailable(_ fileID: String) {
-        guard publications.removeValue(forKey: fileID) != nil else { return }
-        for (id, grant) in authorized where grant.file.id == fileID {
-            closePeer(id)
-            authorized.removeValue(forKey: id)
-            recipients.removeValue(forKey: id)
+    func candyAnswer() async throws -> RTCSessionDescription {
+        try await withCheckedThrowingContinuation { continuation in
+            answer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { description, error in
+                if let description { continuation.resume(returning: description) }
+                else { continuation.resume(throwing: error ?? CandyTransferFailure.network("应答连接失败。")) }
+            }
         }
-        for (id, sourceID) in uploadFiles where sourceID == fileID { uploads[id]?.cancel() }
-        send?(CandyTransferEnvelope(type: "source-unavailable", fileId: fileID, error: "Source file was removed or changed."))
-        publicationUnavailable?(fileID)
-        failed?(nil, "源歌曲已删除或发生变化，相关分享和下载已撤销。")
     }
 
-    private func isSourceFailure(_ error: Error) -> Bool {
-        if let failure = error as? CandyTransferFailure, case .source = failure { return true }
-        let failure = error as NSError
-        return failure.domain == NSCocoaErrorDomain && [
-            CocoaError.Code.fileReadNoSuchFile.rawValue, CocoaError.Code.fileNoSuchFile.rawValue,
-            CocoaError.Code.fileReadNoPermission.rawValue
-        ].contains(failure.code)
-    }
-}
-
-private actor CandyTransferHTTP {
-    private let redirectGuard = CandyTransferRedirectGuard()
-    private lazy var session = URLSession(configuration: .ephemeral, delegate: redirectGuard, delegateQueue: nil)
-
-    func response(_ original: URLRequest, body: Data?, limit: Int) async throws -> (Data, HTTPURLResponse) {
-        var request = original
-        request.httpBody = body
-        let (stream, raw) = try await session.bytes(for: request)
-        guard let response = raw as? HTTPURLResponse else { throw CandyTransferFailure.network("下载网关响应无效。") }
-        var bytes = Data()
-        for try await byte in stream {
-            try Task.checkCancellation()
-            guard bytes.count < limit else { throw CandyTransferFailure.invalid("下载网关返回超出限制的数据。") }
-            bytes.append(byte)
+    func candyApplyLocal(_ description: RTCSessionDescription) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            setLocalDescription(description) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
         }
-        return (bytes, response)
+    }
+
+    func candyApplyRemote(_ description: RTCSessionDescription) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            setRemoteDescription(description) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
     }
 }
 
-private final class CandyTransferRedirectGuard: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
-}
+/// One-shot main-actor event that tasks can await with a timeout.
+@MainActor
+final class CandyLatch {
+    private var finished = false
+    private var failure: Error?
+    private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+    var isSucceeded: Bool { finished && failure == nil }
 
-private final class CandyTransferPeer: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDelegate {
-    let id: String
-    let fileID: String
-    let remote: String
-    let generation: Int
-    let serving: Bool
-    var connection: RTCPeerConnection?
-    var channel: RTCDataChannel?
-    var worker: Task<Void, Never>?
-    var acknowledged: Int64 = 0
-    var sentOffset: Int64 = 0
-    var eofSent = false
-    var lastProgress = Date()
-    let created = Date()
-    var onCandidate: (@MainActor (RTCIceCandidate) -> Void)?
-    var onOpen: (@MainActor () -> Void)?
-    var onData: (@MainActor (RTCDataBuffer) async -> Void)?
-    var onFailure: (@MainActor (String) -> Void)?
-    private var pendingCandidates: [RTCIceCandidate] = []
-    private var hasRemoteDescription = false
-    private var opened = false
-    private let lock = NSLock()
-    private var incoming: [RTCDataBuffer] = []
-    private var incomingBytes = 0
-    private var delivering = false
+    nonisolated init() {}
 
-    init(id: String, fileID: String, remote: String, generation: Int, serving: Bool) {
-        self.id = id
-        self.fileID = fileID
-        self.remote = remote
-        self.generation = generation
-        self.serving = serving
+    func succeed() { finish(nil) }
+    func fail(_ error: Error) { finish(error) }
+
+    private func finish(_ error: Error?) {
+        guard !finished else { return }
+        finished = true
+        failure = error
+        let pending = waiters
+        waiters.removeAll()
+        for continuation in pending.values {
+            if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+        }
     }
 
-    @MainActor func attach(_ channel: RTCDataChannel) {
-        guard channel.label == "file-v2:\(id)", self.channel == nil else {
-            channel.close()
-            onFailure?("收到不支持或重复的文件通道。")
+    /// Waits for the event; on timeout throws `failure`, or returns normally when `failure` is nil.
+    func wait(seconds: Double, failure timeoutError: Error? = nil) async throws {
+        if finished {
+            if let failure { throw failure }
             return
         }
+        let id = UUID()
+        let timer = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard let self, let continuation = self.waiters.removeValue(forKey: id) else { return }
+            if let timeoutError { continuation.resume(throwing: timeoutError) } else { continuation.resume() }
+        }
+        defer { timer.cancel() }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            waiters[id] = continuation
+        }
+    }
+
+    /// Non-throwing wait (used for ICE gathering, which proceeds on timeout).
+    func wait(seconds: Double) async {
+        try? await wait(seconds: seconds, failure: nil)
+    }
+}
+
+/// Thread-safe queue fed by WebRTC delegate callbacks.
+final class CandyInbox: @unchecked Sendable {
+    enum Item { case text(String), binary(Data) }
+    private let lock = NSLock()
+    private var queue: [Item] = []
+    private var head = 0
+    private var bytes = 0
+    private var failure: Error?
+    private var waiter: (id: UUID, continuation: CheckedContinuation<Item, Error>)?
+
+    func push(_ item: Item) {
+        lock.lock()
+        guard failure == nil else { lock.unlock(); return }
+        if let waiter {
+            self.waiter = nil
+            lock.unlock()
+            waiter.continuation.resume(returning: item)
+            return
+        }
+        queue.append(item)
+        if case .binary(let data) = item { bytes += data.count }
+        let overflow = bytes > 33_554_432
+        lock.unlock()
+        if overflow { fail(CandyTransferFailure.network("接收缓冲已满，正在恢复。")) }
+    }
+
+    func fail(_ error: Error) {
+        lock.lock()
+        guard failure == nil else { lock.unlock(); return }
+        failure = error
+        let pending = waiter
+        waiter = nil
+        lock.unlock()
+        pending?.continuation.resume(throwing: error)
+    }
+
+    func next(timeout: TimeInterval) async throws -> Item {
+        let id = UUID()
+        let timer = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.expire(id)
+        }
+        defer { timer.cancel() }
+        return try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            if head < queue.count {
+                let item = queue[head]
+                head += 1
+                if case .binary(let data) = item { bytes -= data.count }
+                if head > 256 {
+                    queue.removeFirst(head)
+                    head = 0
+                }
+                lock.unlock()
+                continuation.resume(returning: item)
+            } else if let failure {
+                lock.unlock()
+                continuation.resume(throwing: failure)
+            } else {
+                waiter = (id, continuation)
+                lock.unlock()
+            }
+        }
+    }
+
+    private func expire(_ id: UUID) {
+        lock.lock()
+        guard let pending = waiter, pending.id == id else { lock.unlock(); return }
+        waiter = nil
+        lock.unlock()
+        pending.continuation.resume(throwing: CandyTransferFailure.network("对方长时间无响应"))
+    }
+}
+
+final class CandyRTCPeer: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDelegate {
+    let session: String
+    let remote: String
+    var connection: RTCPeerConnection?
+    private(set) var channel: RTCDataChannel?
+    let inbox = CandyInbox()
+    let gathering = CandyLatch()
+    let channelOpen = CandyLatch()
+    @MainActor var onChannel: (@MainActor (RTCDataChannel) -> Void)?
+    @MainActor private var iceState: RTCIceConnectionState = .new
+    @MainActor private var closed = false
+
+    init(session: String, remote: String) {
+        self.session = session
+        self.remote = remote
+    }
+
+    @MainActor func attach(_ channel: RTCDataChannel) -> Bool {
+        guard self.channel == nil, !closed else { return false }
         self.channel = channel
         channel.delegate = self
-        if channel.readyState == .open { open() }
+        if channel.readyState == .open { channelOpen.succeed() }
+        return true
     }
 
-    @MainActor private func open() {
-        guard !opened else { return }
-        opened = true
-        onOpen?()
-    }
-
-    @MainActor func control(_ control: CandyTransferControl) throws {
-        let bytes = try JSONEncoder().encode(control)
+    @MainActor func sendControl(_ message: CandyWireMessage) throws {
+        let bytes = try JSONEncoder().encode(message)
         guard channel?.readyState == .open, channel?.sendData(RTCDataBuffer(data: bytes, isBinary: false)) == true else {
-            throw CandyTransferFailure.network("下载控制消息发送失败。")
+            throw CandyTransferFailure.network("控制消息发送失败。")
         }
     }
 
-    @MainActor func add(_ candidate: RTCIceCandidate) {
-        if hasRemoteDescription { connection?.add(candidate) }
-        else if pendingCandidates.count < 128 { pendingCandidates.append(candidate) }
-        else { onFailure?("连接候选超过限制。") }
+    @MainActor func shutdown(_ error: Error) {
+        guard !closed else { return }
+        closed = true
+        inbox.fail(error)
+        channelOpen.fail(error)
+        gathering.succeed()
+        channel?.close()
+        connection?.close()
     }
 
-    @MainActor func remoteDescriptionReady() {
-        hasRemoteDescription = true
-        pendingCandidates.forEach { connection?.add($0) }
-        pendingCandidates.removeAll()
-    }
-
-    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
-        Task { @MainActor in onCandidate?(candidate) }
-    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
-        Task { @MainActor in attach(dataChannel) }
+        Task { @MainActor in onChannel?(dataChannel) }
     }
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
+        if newState == .complete { Task { @MainActor in gathering.succeed() } }
+    }
+
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
-        if newState == .failed || newState == .disconnected {
-            Task { @MainActor in
-                if !(serving && eofSent) { onFailure?("点对点连接中断，正在恢复。") }
+        Task { @MainActor in
+            iceState = newState
+            switch newState {
+            case .failed, .closed:
+                inbox.fail(CandyTransferFailure.network("点对点连接中断"))
+                channelOpen.fail(CandyTransferFailure.network("点对点连接失败"))
+            case .disconnected:
+                // Brief disconnects can heal; a network switch does not.
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if iceState == .disconnected { inbox.fail(CandyTransferFailure.network("点对点连接中断")) }
+            default: break
             }
         }
     }
+
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        let state = dataChannel.readyState
         Task { @MainActor in
-            if dataChannel.readyState == .open { open() }
-            else if dataChannel.readyState == .closed, !(serving && eofSent) { onFailure?("文件通道已关闭。") }
+            if state == .open { channelOpen.succeed() }
+            else if state == .closed {
+                inbox.fail(CandyTransferFailure.network("文件通道已关闭"))
+                channelOpen.fail(CandyTransferFailure.network("文件通道已关闭"))
+            }
         }
     }
+
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
-        lock.lock()
-        guard buffer.data.count <= 16_384, incomingBytes + buffer.data.count <= 2_097_152, incoming.count < 1024 else {
-            lock.unlock()
-            Task { @MainActor in onFailure?("下载接收缓冲已满，正在恢复。") }
-            return
-        }
-        incoming.append(buffer)
-        incomingBytes += buffer.data.count
-        let schedule = !delivering
-        delivering = true
-        lock.unlock()
-        guard schedule else { return }
-        Task { @MainActor in
-            while let next = pop() { await onData?(next) }
-        }
+        if buffer.isBinary { inbox.push(.binary(buffer.data)) }
+        else { inbox.push(.text(String(decoding: buffer.data, as: UTF8.self))) }
     }
-    private func pop() -> RTCDataBuffer? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !incoming.isEmpty else { delivering = false; return nil }
-        let message = incoming.removeFirst()
-        incomingBytes -= message.data.count
-        return message
-    }
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCPeerConnectionState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
 }

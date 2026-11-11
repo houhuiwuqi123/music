@@ -7,8 +7,18 @@ Type=simple
 # 1. 明确指定工作目录
 WorkingDirectory=/www/wwwroot/webtrc/backend
 
-# 2. 核心：在启动命令后面加上网关参数和外部访问 URL
-ExecStart=/www/wwwroot/webtrc/backend/server -port 8080 -gateway-port 8081 -gateway-public-url https://music.webtrc.eu.cc/gateway -gateway-cache-dir /www/wwwroot/webtrc/backend/state/relay-cache -identity-store /www/wwwroot/webtrc/backend/state/identities.json -geoip-db /www/wwwroot/webtrc/backend/GeoLite2-City.mmdb
+# 2. 轻量级 DHT 节点（libp2p Kademlia + GossipSub + 信令 + iOS 网关）
+# NODE_ANNOUNCE：对外公布的地址。wss 走 nginx 的 8443；tcp/quic 4001 必须是源站公网 IP
+#（Cloudflare 不代理原始 TCP/UDP），供其他节点互联。把 203.0.113.10 换成服务器公网 IP。
+# NODE_BOOTSTRAP：其他节点的地址（/…/p2p/<peerId>），多个用逗号分隔；单节点留空。
+# 防火墙需放行 4001/tcp、4001/udp 和 8443/tcp。
+Environment=NODE_ANNOUNCE=/dns4/music.webtrc.eu.cc/tcp/8443/wss,/ip4/203.0.113.10/tcp/4001,/ip4/203.0.113.10/udp/4001/quic-v1
+Environment=NODE_BOOTSTRAP=
+Environment=NODE_GATEWAY_URL=wss://music.webtrc.eu.cc/ws
+# 可选 TURN（coturn use-auth-secret），见 deploy/compose.yaml：
+# Environment=TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349
+# Environment=TURN_REST_SECRET=...
+ExecStart=/www/wwwroot/webtrc/backend/server -http 127.0.0.1:8080 -key /www/wwwroot/webtrc/backend/state/node.key -listen /ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1,/ip4/127.0.0.1/tcp/4002/ws -geoip-db /www/wwwroot/webtrc/backend/GeoLite2-City2.mmdb
 
 # === 稳定保障 ===
 Restart=always

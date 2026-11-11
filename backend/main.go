@@ -1,231 +1,180 @@
+// Command webtrc-signaling runs an AURU lightweight node: a libp2p Kademlia
+// DHT server + GossipSub plaza relay + WebRTC signalling router, with an HTTP
+// side for the bootstrap list, ICE config and the iOS gateway WebSocket.
 package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
-	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/gogf/gf/v2/frame/g"
-	"github.com/gogf/gf/v2/net/ghttp"
+	"github.com/gorilla/websocket"
 
 	"webtrc-signaling/internal/geoip"
-	"webtrc-signaling/internal/hub"
-	"webtrc-signaling/internal/model"
+	"webtrc-signaling/internal/node"
 )
 
 func main() {
-	port := flag.Int("port", 8080, "HTTP signaling port")
+	httpAddr := flag.String("http", "127.0.0.1:8080", "HTTP listen address (API + iOS gateway WebSocket); put TLS in front")
+	keyPath := flag.String("key", "./state/node.key", "persisted node identity")
+	listen := flag.String("listen", "/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1,/ip4/127.0.0.1/tcp/4002/ws",
+		"comma-separated libp2p listen multiaddrs")
+	announce := flag.String("announce", os.Getenv("NODE_ANNOUNCE"), "comma-separated public multiaddrs to advertise (e.g. /dns4/host/tcp/8443/wss)")
+	bootstrap := flag.String("bootstrap", os.Getenv("NODE_BOOTSTRAP"), "comma-separated multiaddrs of other nodes (/…/p2p/<id>)")
+	gatewayURL := flag.String("gateway-url", os.Getenv("NODE_GATEWAY_URL"), "public wss:// URL of this node's /ws gateway, listed in /api/bootstrap")
+	webDir := flag.String("web-dir", "", "optional directory with the built Vue app to serve at /")
 	database := flag.String("geoip-db", os.Getenv("GEOIP_DB_PATH"), "local GeoLite2 City/Country MMDB path")
-	proxyCIDRs := flag.String("trusted-proxies", os.Getenv("TRUSTED_PROXY_CIDRS"), "comma-separated trusted reverse proxy CIDRs")
-	gatewayPort := flag.Int("gateway-port", 0, "independent localhost gateway port (0 disables reliable grants)")
-	gatewayURL := flag.String("gateway-public-url", os.Getenv("GATEWAY_PUBLIC_URL"), "external HTTPS gateway base URL")
-	cacheDir := flag.String("gateway-cache-dir", "./state/relay-cache", "exclusive temporary relay cache directory")
-	identityPath := flag.String("identity-store", "./state/identities.json", "persisted TOFU identity digests")
-	maxFile := flag.Int64("gateway-max-file-bytes", 2<<30, "maximum manifest file size")
-	maxCache := flag.Int64("gateway-max-cache-bytes", 4<<30, "maximum reserved cache bytes")
-	maxOwner := flag.Int64("gateway-max-owner-bytes", 2<<30, "maximum reserved bytes per owner")
-	gatewayRate := flag.Int64("gateway-bytes-per-second", 64<<20, "aggregate upload/download byte rate")
+	proxyCIDRs := flag.String("trusted-proxies", os.Getenv("TRUSTED_PROXY_CIDRS"), "comma-separated trusted reverse proxy CIDRs (loopback is always trusted)")
 	flag.Parse()
-	identities, err := hub.OpenIdentityStore(*identityPath)
-	if err != nil {
-		g.Log().Fatal(context.Background(), "identity store unavailable")
-		return
-	}
+
+	logger := log.New(os.Stderr, "", log.LstdFlags)
 	regions, err := geoip.Open(*database)
 	if err != nil {
-		g.Log().Fatal(context.Background(), err)
-		return
+		logger.Fatal(err)
 	}
 	defer regions.Close()
-	proxies, err := geoip.ParseTrustedProxies(*proxyCIDRs)
+	proxies, err := geoip.ParseTrustedProxies(strings.Join(append(split(*proxyCIDRs), "127.0.0.1/32", "::1/128"), ","))
 	if err != nil {
-		g.Log().Fatal(context.Background(), err)
-		return
+		logger.Fatal(err)
 	}
-	if *database == "" {
-		g.Log().Warning(context.Background(), "GeoIP database not configured; regions will be unknown")
+
+	n, err := node.New(node.Config{KeyPath: *keyPath, Listen: split(*listen), Announce: split(*announce),
+		Bootstrap: split(*bootstrap), Logger: logger})
+	if err != nil {
+		logger.Fatal(err)
 	}
-	h := hub.New()
-	if *gatewayPort != 0 {
-		cfg := hub.DefaultTransferConfig(*cacheDir, *gatewayURL)
-		cfg.MaxFileSize = *maxFile
-		cfg.MaxCacheBytes = *maxCache
-		cfg.MaxOwnerBytes = *maxOwner
-		cfg.BytesPerSecond = *gatewayRate
-		if err := h.EnableTransfers(cfg); err != nil {
-			g.Log().Fatal(context.Background(), err)
-			return
+	defer n.Close()
+
+	ice := iceProvider(split(os.Getenv("STUN_URLS")), split(os.Getenv("TURN_URLS")), os.Getenv("TURN_REST_SECRET"))
+	region := func(r *http.Request) string {
+		value, err := regions.Region(geoip.ClientIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), proxies))
+		if err != nil || value == "" {
+			return "地区未知"
 		}
-		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *gatewayPort))
-		if err != nil {
-			g.Log().Fatal(context.Background(), err)
-			return
-		}
-		gateway := &http.Server{Handler: h.Gateway(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
-			WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
-		go func() {
-			if err := gateway.Serve(listener); err != nil && err != http.ErrServerClosed {
-				g.Log().Fatal(context.Background(), err)
-			}
-		}()
+		return value
 	}
-	var turnURLs []string
-	for _, value := range strings.Split(os.Getenv("TURN_URLS"), ",") {
-		if value = strings.TrimSpace(value); value != "" {
-			turnURLs = append(turnURLs, value)
-		}
-	}
-	turnSecret := os.Getenv("TURN_REST_SECRET")
-	s := g.Server()
+	server := &http.Server{Addr: *httpAddr, Handler: routes(n, ice, region, *gatewayURL, *webDir),
+		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
 	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for now := range ticker.C {
-			h.ExpireListening(now)
-			h.SweepTransfers(now)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatal(err)
 		}
 	}()
+	logger.Printf("http on %s", *httpAddr)
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = server.Shutdown(ctx)
+}
 
-	s.BindHandler("/ws", func(r *ghttp.Request) {
-		clientID := r.Get("id").String()
-		verified, err := identities.Authenticate(clientID, r.Get("secret").String())
+func routes(n *node.Node, ice func(string) []node.ICEServer, region func(*http.Request) string, gatewayURL, webDir string) http.Handler {
+	mux := http.NewServeMux()
+	upgrader := websocket.Upgrader{ReadBufferSize: 16 << 10, WriteBufferSize: 16 << 10,
+		CheckOrigin: func(*http.Request) bool { return true }} // authenticated by Ed25519 challenge, not cookies
+	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			r.Response.WriteStatus(403, "identity rejected")
 			return
 		}
-
-		conn, err := r.WebSocket()
-		if err != nil {
-			g.Log().Warning(r.Context(), "websocket upgrade failed:", err)
-			return
-		}
-		defer conn.Close()
-		conn.SetReadLimit(128 << 10)
-
-		region, err := regions.Region(geoip.ClientIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), proxies))
-		if err != nil {
-			g.Log().Error(r.Context(), err)
-			region = "地区未知"
-		}
-		client := &hub.Client{ID: clientID, Conn: conn, Region: region, Verified: verified}
-		snapshot := h.Register(client)
-		clientTURNSecret := turnSecret
-		if !verified {
-			clientTURNSecret = ""
-		}
-		sendConfig := func() {
-			_ = client.Send(&model.WSMessage{Type: "config", ICEServers: hub.ICEConfig(clientID, time.Now(), turnURLs, clientTURNSecret),
-				GatewayEnabled: *gatewayPort != 0, ProtocolVersion: 2})
-		}
-		sendConfig()
-		_ = client.Send(&model.WSMessage{Type: "plaza", Files: snapshot})
-		if err := h.SendListeningSnapshot(client); err != nil {
-			g.Log().Warning(r.Context(), "listening snapshot failed:", err)
-		}
-
-		defer func() {
-			h.DisconnectListening(client, time.Now())
-		}()
-
-		for {
-			_, msgBytes, err := conn.ReadMessage()
-			if err != nil {
-				return
-			}
-
-			var msg model.WSMessage
-			if err := json.Unmarshal(msgBytes, &msg); err != nil {
-				continue
-			}
-			if !h.Active(client) {
-				return
-			}
-			if !client.AllowMessage(time.Now()) {
-				_ = client.Send(&model.WSMessage{Type: "transfer-error", RequestID: msg.RequestID, TransferID: msg.TransferID, Error: "rate-limited"})
-				continue
-			}
-
-			switch msg.Type {
-			case "listening":
-				sendConfig()
-				if err := h.UpdateListening(client, msg.Listening, time.Now()); err != nil {
-					g.Log().Warning(r.Context(), "invalid listening update:", err)
-					if sendErr := client.Send(&model.WSMessage{Type: "error", Error: err.Error()}); sendErr != nil {
-						g.Log().Warning(r.Context(), "listening error response failed:", sendErr)
-					}
-				}
-			case "publish":
-				if err := h.PublishClient(client, msg.File); err != nil {
-					_ = client.Send(&model.WSMessage{Type: "error", Error: err.Error()})
-					continue
-				}
-				h.Broadcast(h.Snapshot())
-
-			case "unpublish":
-				if msg.FileID == "" {
-					continue
-				}
-				if err := h.UnpublishClient(client, msg.FileID); err != nil {
-					_ = client.Send(&model.WSMessage{Type: "error", Error: err.Error()})
-					continue
-				}
-				h.Broadcast(h.Snapshot())
-			case "lease-refresh":
-				if err := h.RefreshLease(client, time.Now()); err != nil {
-					_ = client.Send(&model.WSMessage{Type: "error", Error: err.Error()})
-				} else {
-					sendConfig()
-				}
-			case "share-retire":
-				if err := h.RetireShare(client, msg.FileID); err != nil {
-					_ = client.Send(&model.WSMessage{Type: "error", Error: err.Error()})
-				}
-			case "source-unavailable":
-				if err := h.SourceUnavailable(client, msg.FileID); err != nil {
-					_ = client.Send(&model.WSMessage{Type: "error", Error: err.Error()})
-				}
-
-			case "signal":
-				if msg.To == "" {
-					continue
-				}
-				if !h.RelaySignal(client, &msg) {
-					_ = client.Send(&model.WSMessage{Type: "transfer-error", TransferID: msg.TransferID, Error: "invalid-signal"})
-				}
-			case "transfer-request":
-				sendConfig()
-				transfer, err := h.RequestTransfer(client, &msg, time.Now())
-				if err != nil {
-					_ = client.Send(&model.WSMessage{Type: "transfer-error", RequestID: msg.RequestID, TransferID: msg.TransferID, Error: err.Error()})
-					continue
-				}
-				_ = client.Send(&model.WSMessage{Type: "transfer", RequestID: msg.RequestID, Transfer: transfer})
-			case "transfer-cancel", "transfer-complete":
-				var err error
-				if msg.Type == "transfer-complete" {
-					err = h.CompleteTransfer(client, msg.TransferID)
-				} else {
-					err = h.CancelTransfer(client, msg.RequestID, msg.TransferID)
-				}
-				if err != nil {
-					_ = client.Send(&model.WSMessage{Type: "transfer-error", TransferID: msg.TransferID, Error: err.Error()})
-				}
-			case "upload-error":
-				if err := h.UploadError(client, msg.TransferID); err != nil {
-					_ = client.Send(&model.WSMessage{Type: "transfer-error", TransferID: msg.TransferID, Error: err.Error()})
-				}
-			case "config":
-				sendConfig()
-			}
-		}
+		n.ServeGateway(conn, node.GatewayOptions{Region: region(r), GatewayURL: gatewayURL, ICE: ice})
 	})
+	mux.HandleFunc("GET /api/bootstrap", func(w http.ResponseWriter, r *http.Request) {
+		// The initial node list: this node plus the other DHT servers in its routing table.
+		nodes := []node.NodeInfo{{PeerID: n.Host.ID().String(), Addrs: n.Addrs(), Gateway: gatewayURL}}
+		for _, info := range n.RoutingPeers() {
+			entry := node.NodeInfo{PeerID: info.ID.String()}
+			for _, addr := range info.Addrs {
+				if isPublic(addr.String()) {
+					entry.Addrs = append(entry.Addrs, addr.String()+"/p2p/"+info.ID.String())
+				}
+			}
+			if len(entry.Addrs) > 0 {
+				nodes = append(nodes, entry)
+			}
+		}
+		writeJSON(w, map[string]any{"nodes": nodes, "dht": node.DHTProtocol, "topic": node.PlazaTopic})
+	})
+	mux.HandleFunc("GET /api/whoami", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"region": region(r)})
+	})
+	mux.HandleFunc("GET /api/ice", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"iceServers": ice("web")})
+	})
+	mux.HandleFunc("GET /api/plaza", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"entries": n.Plaza.Entries()})
+	})
+	if webDir != "" {
+		files := http.FileServer(http.Dir(webDir))
+		mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+			if _, err := os.Stat(filepath.Join(webDir, filepath.Clean("/"+r.URL.Path))); err != nil {
+				r.URL.Path = "/" // SPA fallback
+			}
+			files.ServeHTTP(w, r)
+		})
+	}
+	return mux
+}
 
-	s.SetPort(*port)
-	s.Run()
+func writeJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+// iceProvider issues coturn REST credentials (use-auth-secret) valid for one hour.
+func iceProvider(stun, turn []string, secret string) func(string) []node.ICEServer {
+	if len(stun) == 0 {
+		stun = []string{"stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"}
+	}
+	return func(id string) []node.ICEServer {
+		result := []node.ICEServer{{URLs: stun}}
+		if len(turn) > 0 && secret != "" {
+			username := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10) + ":" + id
+			mac := hmac.New(sha1.New, []byte(secret))
+			_, _ = mac.Write([]byte(username))
+			result = append(result, node.ICEServer{URLs: turn, Username: username, Credential: base64.StdEncoding.EncodeToString(mac.Sum(nil))})
+		}
+		return result
+	}
+}
+
+func isPublic(addr string) bool {
+	parts := strings.Split(addr, "/")
+	if len(parts) < 3 {
+		return false
+	}
+	switch parts[1] {
+	case "dns", "dns4", "dns6":
+		return parts[2] != "localhost"
+	case "ip4", "ip6":
+		ip := net.ParseIP(parts[2])
+		return ip != nil && !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() && !ip.IsUnspecified()
+	}
+	return false
+}
+
+func split(value string) []string {
+	var result []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
 }

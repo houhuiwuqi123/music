@@ -1,179 +1,119 @@
-# Music signaling and temporary online-transfer gateway
+# AURU 轻量级 DHT 节点（backend）
 
-Implemented here; no production service is modified automatically. The independent stdlib HTTP gateway binds **127.0.0.1**, separate from the WebSocket port. It is a temporary, verified-byte fan-out cache, not an offline music library. Source online authorization is necessary even after the entire file is cached.
+Candy广场 已从中心化信令 hub 改为去中心化 DHT 网络。本目录是**轻量级节点**：任何人都可以多跑几台，节点之间用 libp2p Kademlia 组成 DHT，iOS 和网页端都通过它入网。
 
-## Build, configure, run
+| 层 | 实现 |
+|---|---|
+| 表现层 | iOS SwiftUI（`AURU MUSIC/`）、Vue 3 + Vite（`web/`） |
+| P2P 传输 | WebRTC DataChannel `auru-file/1`：64 KiB 分片，按 1 MiB 块边收边校验 |
+| 发现 / 路由 | Kademlia DHT `/auru/kad/1.0.0`（go-libp2p-kad-dht 服务端 / js-libp2p 客户端），CID 内容寻址；GossipSub 广场频道 `auru/plaza/1` |
+| 入网 | 引导节点 `GET /api/bootstrap` 提供初始节点列表；STUN（可选 TURN）辅助打洞 |
+
+## 为什么 iOS 走节点网关
+
+浏览器和手机都在 NAT 后面，别人拨不进来。libp2p 规定这类节点只能当 **DHT client**，路由表由可被拨入的服务端节点承载。两类终端接入方式如下：
+
+- **网页端**跑完整的 js-libp2p：通过 WebSocket 连上节点，自己发起 `PROVIDE` / `GET_PROVIDERS`，在节点上预约 circuit-relay 槽位，这样它的 provider 记录里会带一个指向所在节点的地址。
+- **iOS** 目前没有可用于生产的 Swift libp2p，所以通过节点的 `/ws` 网关接入，由节点代为执行 Kademlia 操作。iOS 仍然持有**自己的 Ed25519 libp2p 身份**（peer ID 与 js/go 算法一致），自己签名广场公告，文件也是点对点直传，节点只转发 SDP。
+
+Kademlia 只接受“自己宣告自己”的 provider 记录（`handleAddProvider` 会忽略替别人发的记录），所以节点替 iOS **以自己的名义** `PROVIDE` 该 CID，再通过 `/auru/resolve/1.0.0` 告诉查询者当前挂在本节点、持有该 CID 的终端。查询方拿到的是“终端 peer ID + 它所在的节点”，SDP 就经由那个节点送达。
+
+## 业务流程
+
+1. **入网**：客户端请求 `GET /api/bootstrap`，得到节点列表（本节点加上路由表里的其他 DHT 服务端）。网页端用 wss 拨号，iOS 连接节点的 `gateway` 地址。列表会缓存在本地，节点不可达时轮换下一个。
+2. **发布**：文件先算 SHA-256，CID = CIDv1(raw, sha2-256)，即 `bafkrei…`。网页端自己 `PROVIDE`；iOS 由节点代为 `PROVIDE`。同时在 GossipSub 上广播签名公告（正在听什么、分享了哪些文件、经由哪个节点可达）。
+3. **发现**：`GET_PROVIDERS(CID)`。provider 是节点时调用 resolve 展开成终端；带 `/p2p-circuit` 地址的 provider 是浏览器，其 relay 节点就是信令中转。
+4. **连接**：下载方生成完整的 SDP offer（非 trickle，候选收集完再发），经节点送到提供方；提供方回 answer 后建立 DataChannel 直连。
+5. **传输**：`get(offset)` → `meta`（包含每 1 MiB 块的哈希）→ 二进制分片 → `end` → `done`。接收方每满一块就校验，最后再用 CID 里的整文件 SHA-256 校验。断线后从最后一个已校验块续传。
+
+## 构建与运行
 
 ```powershell
 Set-Location 'C:\phpwork\music\backend'
 go test ./... -count=1
-go vet ./...
-go build -o music-signaling.exe .
-.\music-signaling.exe -port 8080 -gateway-port 8081 `
-  -gateway-public-url 'https://music.webtrc.eu.cc/gateway' `
-  -gateway-cache-dir '.\state\relay-cache' `
-  -identity-store '.\state\identities.json'
+go build -o server.exe .
+.\server.exe -http 127.0.0.1:8080 -key .\state\node.key `
+  -listen '/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1,/ip4/127.0.0.1/tcp/4002/ws' `
+  -announce '/dns4/music.webtrc.eu.cc/tcp/8443/wss,/ip4/<公网IP>/tcp/4001,/ip4/<公网IP>/udp/4001/quic-v1' `
+  -gateway-url 'wss://music.webtrc.eu.cc/ws' -web-dir ..\web\dist -geoip-db .\GeoLite2-City2.mmdb
 ```
 
-`-gateway-port 0` (default) disables reliable grants; configure both gateway flags to enable them. `GATEWAY_PUBLIC_URL` supplies the public URL default. HTTPS is mandatory for advertised URLs; terminate TLS at the reverse proxy, not on the localhost gateway. URLs must have no userinfo/query/fragment. A path prefix is supported if the reverse proxy strips it. Never expose the HTTP port directly.
+| 参数 / 环境变量 | 说明 |
+|---|---|
+| `-key` | 节点身份。首次启动时生成，之后保持不变，peer ID 由它决定。请备份并限制权限。 |
+| `-listen` | libp2p 监听地址。`…/4002/ws` 只绑定本机，由 nginx 的 8443 端口终止 TLS 后转发。 |
+| `-announce` / `NODE_ANNOUNCE` | 对外公布的地址。浏览器只能使用 wss，节点之间互联使用源站公网 IP 的 tcp/quic（Cloudflare 不代理原始 TCP/UDP）。 |
+| `-bootstrap` / `NODE_BOOTSTRAP` | 其他节点的 `/…/p2p/<peerId>` 地址，多个用逗号分隔。只有一台节点时留空。 |
+| `-gateway-url` / `NODE_GATEWAY_URL` | 本节点 iOS 网关的公开 wss 地址，会出现在 `/api/bootstrap` 结果里。 |
+| `-web-dir` | 可选：直接托管 `web/dist`。 |
+| `STUN_URLS`、`TURN_URLS`、`TURN_REST_SECRET` | ICE 配置。TURN 采用 coturn REST 凭据，有效期 1 小时，见 `deploy/compose.yaml`。 |
+| `-geoip-db`、`-trusted-proxies` | 本地 MMDB 地区查询（不调用外部服务）。回环地址默认视为可信代理。 |
 
-`-identity-store` holds SHA-256 identity-secret digests, persisted by synchronized file write and atomic replacement **before** accepting a new identity. Keep this file, restrict it and its parent to the service account, and back it up. Identity-store failure fails authentication/startup rather than silently resetting identity. No identity secret is included in snapshots or application logs. TOFU is possession of the first registered secret, not an account, and cannot prevent initial ID squatting. Limit unauthenticated upgrade traffic at the proxy. Each process requires an exclusive identity store and cache directory; this implementation is single-instance, not a distributed deployment.
+需要放行的端口：4001/tcp、4001/udp（节点互联），8443/tcp（浏览器 libp2p）。nginx 模板见 `deploy/nginx.conf`，systemd 模板见 `webtrc.service`。
 
-Only cache artifacts named exactly `relay-<canonical UUID>.part` in the configured exclusive directory are deleted on restart. Unrelated files are left alone; matching directories/symlinks cause startup failure. Grants are memory-only: restart loses all grants and resumable prefixes, but **not** persisted identities. The directory and parent must not be attacker-writable. Cache quota reserves the entire declared size before admitting a new physical relay object.
+### 增加一台节点
 
-## WebSocket API (protocol version 2)
+在另一台服务器上用同样的方式启动，并设置 `NODE_BOOTSTRAP=/ip4/<第一台公网IP>/tcp/4001/p2p/<第一台peerId>`（peer ID 可从启动日志或 `/api/bootstrap` 获取）。两台节点会互相进入对方的路由表，GossipSub 会跨节点同步广场，任意节点上的 `GET_PROVIDERS` 都能查到另一台节点上的终端。客户端从 `/api/bootstrap` 自动获知新节点。
 
-Connect to `wss://signaling.example.com/ws?id=<persisted-client-id>&secret=<persisted-secret>`. Swift uses a Keychain-backed 72-character concatenation of two random canonical UUIDs; the server also accepts a single canonical UUID for prior-client compatibility. Keep the same secret across reconnects; use a fresh random ID+secret for a new identity. A mismatched/missing secret on an already-pinned ID is rejected **before upgrade** with HTTP 403. Legacy IDs without any pinned secret can connect without one and publish/listen to metadata, but cannot create reliable grants or send grant-bound signals.
+## HTTP 接口
 
-The server sends:
+| 路径 | 用途 |
+|---|---|
+| `GET /api/bootstrap` | `{"nodes":[{"peerId","addrs":[…/p2p/…],"gateway"}],"dht":"/auru/kad/1.0.0","topic":"auru/plaza/1"}`，即初始节点列表 |
+| `GET /api/ice` | 给浏览器使用的 `{"iceServers":[…]}` |
+| `GET /api/whoami` | `{"region":"广东省"}`，浏览器写进自己的公告 |
+| `GET /api/plaza` | 当前广场快照（调试用） |
+| `GET /ws` | iOS 网关 WebSocket（见下文） |
+
+## libp2p 协议
+
+| 协议 | 帧格式 | 内容 |
+|---|---|---|
+| `/auru/kad/1.0.0` | 标准 Kademlia | PROVIDE / GET_PROVIDERS / FIND_NODE |
+| `auru/plaza/1` | GossipSub | 签名公告 `Envelope`（见下文） |
+| `/auru/plaza/1.0.0` | uvarint 长度前缀 JSON | 节点返回 `[{"envelope","offline"}]`，作为新加入者的初始快照 |
+| `/auru/resolve/1.0.0` | 同上 | `{"cid"}` → `{"peers":[peerId…]}`：本节点上持有该 CID 的在线终端 |
+| `/auru/signal/1.0.0` | 同上 | 一条 `Signal`，回复 `{"ok":true}` 或 `{"error":"unreachable"}` |
+
+`Signal = {from,to,node,nodeAddrs,fromNode,fromNodeAddrs,session,kind:"offer|answer|bye",sdp,hop}`。如果 `to` 挂在本节点（网关会话或直连的浏览器），节点直接投递；否则按 `node` 转发一跳。终端发出的信令，`from` 一律由节点根据已认证的连接改写，只有节点之间转发（`hop=1`）时才沿用原值。
+
+### 广场公告
 
 ```json
-{"type":"config","protocolVersion":2,"gatewayEnabled":true,"iceServers":[{"urls":["stun:stun.l.google.com:19302"]}]}
+{"body":"<JSON 原文>","sig":"base64 Ed25519(\"auru-plaza:\"+body)","pub":"base64 libp2p 公钥 protobuf"}
 ```
 
-TURN credentials are added when configured. Request another config with `{"type":"config"}` before credentials expire. A registered active socket alone can mutate state, request/cancel grants, or relay signals. Replacing a socket closes the previous one and revokes its grants; its late cleanup cannot affect its replacement.
+`body = {"v":1,"peerId","name","avatar?","region?","client":"ios|web","via":["/…/p2p/<node>"],"listening?":{"title","artist","isPlaying"},"files":[{"cid","name","size","sha256","kind":"listening|upload","mime?"}],"seq":<unix ms>,"bye?":true}`
 
-### Current publication and online lease
+签名覆盖 body 的原始文本，所以三种语言都不需要规范化 JSON。节点校验以下几点：签名正确；`peerId` 与公钥对应；`seq` 单调递增（防重放）且时间误差在 −5 分钟到 +1 分钟之内；每个 `cid` 确实是对应 `sha256` 的 CID；字段长度不超限。客户端每 30 秒重发一次公告；超过 90 秒没有收到新公告视为离线，再过 60 秒从广场移除。签名的 `bye` 会立即移除。iOS 网关断开时，节点会把对应条目立即标为离线。
 
-```json
-{"type":"listening","listening":{"ownerName":"Visitor","title":"Song","artist":"Artist","isPlaying":true,"file":{"id":"PUBLICATION-UUID","name":"song.mp3","size":12345,"sha256":"64-lowercase-hex-digits","protocolVersion":2}}}
+## iOS 网关 WebSocket `/ws`
+
+```text
+S→C {"type":"challenge","nonce","node":{peerId,addrs,gateway}}
+C→S {"type":"hello","publicKey":"base64 原始 Ed25519 公钥","signature":"base64 sign(\"auru-node-auth:\"+nonce+\":\"+nodePeerId)"}
+S→C {"type":"welcome","peerId","region","node","routing":[DHT 路由表],"iceServers","entries":[广场]}
+C→S {"type":"announce","id","envelope"}       → {"type":"announced"} | {"type":"error"}
+C→S {"type":"find","id","cid"}                → {"type":"providers","id","providers":[{peerId,node,nodeAddrs}]}
+C→S {"type":"signal","signal":{…}}            ← {"type":"signal","signal":{…}} | {"type":"signal-error"}
+C→S {"type":"ice"} / {"type":"ping"}
+S→C {"type":"plaza-update","entry"} / {"type":"plaza-remove","peerId"} / {"type":"plaza","entries"}
 ```
 
-`FileMeta.sha256` and `protocolVersion` remain optional for metadata compatibility. Reliable requests require version 2, a positive bounded size, a UUID publication ID, and a SHA-256 hash manifest. Compute the hash **before** publishing. UUID identifies the publication; SHA-256 identifies stable content/checkpoints. Reusing a publication UUID with different size/hash is rejected. The server supplies `ownerId`, `ownerName`, `clientId`, region, and clears client-supplied `offlineAt`.
+同一个 peer ID 再次登录会顶替旧会话。每个会话限速约 20 条/秒（突发 60 条）；客户端处理不过来时会被断开，重连后从完整快照恢复。
 
-Refresh listening every 30 seconds. The lease expires at 90 seconds, independently checked during transfer I/O. Pause with a nonnil file retains sharing. A new nonnil file withdraws the previous publication for **new** requests while keeping old authorized grant manifests/transfers valid. Send `{"type":"listening"}` to opt out completely; retaining listening metadata with `file` absent/null is also a sharing opt-out and revokes **all** owner transfers (including older songs).
+## 测试
 
-Detected disconnect revokes immediately; expiry/opt-out revokes all associated bearer leases and aborts active streams. Reconnect with the same secret does **not** resurrect grants revoked by disconnection. Republish the current share and obtain a new grant. Other recipients do not retain offline access to verified cache bytes. Listener metadata remains offline for 60 seconds after disconnect/expiry; graceful opt-out removes it immediately.
+- `go test ./...`：公告签名与防篡改、CID/peer ID 固定向量；两节点场景下 iOS 终端公告 → 跨节点 gossip → 跨节点 GET_PROVIDERS → 跨节点 offer/answer → 断线后的离线标记与 unreachable；浏览器式 DHT 客户端通过 circuit 地址 PROVIDE 后可被查到；`/api/bootstrap`。
+- `web/`：`npm test`。其中 transfer 测试覆盖分片、块校验、整文件校验、断点续传和坏块拒绝；interop 测试会编译并启动真实的节点二进制，在 Node 里运行真实的 js-libp2p 网页端，再模拟一个 iOS 终端，把发布、发现、信令完整走一遍。
+- iOS：`node scripts/verify-candy-connection.cjs`（Windows 下可运行的源码一致性检查；加 `--live` 会检查线上网关握手）；在 macOS 上运行 `node scripts/verify-candy-disk.cjs`（编译生产代码，验证编解码向量、签名互通和磁盘断点）和 `node scripts/verify-candy-ios.cjs`。
 
-Optional `avatar` is plain base64 JPEG/PNG, <=32 KiB, dimensions 1–256 pixels. Name/title/artist validation and local region lookup remain unchanged. `plaza`/`listeners` snapshots never include secrets or transfer tokens. Legacy `publish`/`unpublish` are ownership-checked metadata operations, not reliable transfer authorization for arbitrary files. Legacy unscoped signal forwarding is no longer allowed.
+以上测试都不能代替真机：WebRTC 打洞、Wi-Fi 与蜂窝网络切换、对称 NAT 下的 TURN 回退，都需要两台手机加一个浏览器实测。
 
-While computing a new manifest asynchronously, send `{"type":"share-retire","fileId":"OLD-PUBLICATION-UUID"}` immediately at cut start. Only the active owner may retire the publication. It removes the old file from `plaza`, clears `listener.file`, and rejects new old-song requests **without** revoking existing grants, cached bytes, or the source lease. Repeated retirement is harmless. Existing grants may renew and the owner's retained source snapshots remain authorized. Publish the new nonnil manifest with `listening` when ready. Do not send a file-less `listening` heartbeat during hashing: that explicitly opts out and revokes; retirement itself does not refresh the 90-second source lease.
+## TURN（可选）
 
-On detected missing/mutated retained source, send `{"type":"source-unavailable","fileId":"PUBLICATION-UUID","error":"source file unavailable/changed"}`. Only the active owner may do this. The publication is retired and **only its grants** are revoked with `error:"source-unavailable"`; its unreferenced cache/upload is invalidated and cleaned. Other publications remain authorized, including a different publication referencing the same verified content bytes. If an unfinished deduplicated upload still serves another publication, the owner gets upload-ID revocation and a replacement upload request bound to that remaining file snapshot. Client error text is not trusted/broadcast. The owner should monitor held source metadata and read errors; the server cannot inspect local device files.
+`deploy/compose.yaml` 和 `deploy/coturn.conf` 用于单独部署 coturn（Linux，host 网络）。coturn 和节点要配置同一个**不提交到仓库**的 `TURN_REST_SECRET`，节点另外设置 `TURN_URLS`。凭据用户名为 `<过期时间>:<peerId|web>`，密码为 base64(HMAC-SHA1(secret, 用户名))，有效期 1 小时。需要放行 3478/udp+tcp、5349/tcp，以及 49160–49259/udp。
 
-Fresh TURN config is also sent on each validly framed `listening` heartbeat and every `transfer-request`, before the request response, so long-running clients need not rely on initial credentials. Owner heartbeat responses renew owner credentials; recipient requests renew recipient credentials.
+## 本地 IP 地区
 
-While a replacement manifest is in flight, send `{"type":"lease-refresh"}` every 30 seconds. Only the active verified owner with an existing **unexpired online** listener/lease may refresh. It updates listener heartbeat and the 90-second transfer lease without changing metadata, republishing the retired file, or reopening admission; success sends refreshed config. Missing/expired/offline state returns `source-offline`; stale/unverified sockets return `identity-required`. It cannot resurrect an expired/disconnected/opted-out source. A file-less `listening` remains explicit privacy withdrawal.
-
-### Grant request, response, ready notification, release
-
-```json
-{"type":"transfer-request","requestId":"UUID","fileId":"PUBLICATION-UUID","to":"OWNER-ID"}
-{"type":"transfer","requestId":"UUID","transfer":{"id":"GRANT-UUID","file":{"id":"PUBLICATION-UUID","name":"song.mp3","size":12345,"ownerId":"OWNER-ID","ownerName":"Visitor","sha256":"HASH","protocolVersion":2},"mode":"relay","token":"RECIPIENT-BEARER","downloadURL":"https://gateway.example.com/v2/transfers/GRANT-UUID/download","expiresAt":1234567890,"status":"waiting","generation":1}}
-```
-
-First two **active** grants per owner use `mode:"p2p"`; subsequent grants use `mode:"relay"`. P2P grants have `status:"ready"` for negotiation but their gateway URL returns 409 `p2p-only`; use WebRTC. Relay grants share one physical object per **owner + SHA-256 + size**. Cache verified once, serve many recipients. Client filenames never form filesystem paths.
-
-Resume an existing still-valid grant by including `transferId:"GRANT-UUID"` in the request with matching owner/file. A new resume request ID increments P2P `generation`; retrying any known request ID is idempotent. At most 64 distinct request IDs per grant; further resumes return `resume-limit`. Never resume a disconnected/revoked grant. Cancellation/completion:
-
-```json
-{"type":"transfer-cancel","transferId":"GRANT-UUID"}
-{"type":"transfer-complete","transferId":"GRANT-UUID"}
-```
-
-Only its recipient may release a grant. Repeated WS releases are harmless. Successful WS/HTTP completion sends the owner `{"type":"transfer-completed","transferId":"GRANT-UUID"}` rather than a revocation error; cancellation still revokes. HTTP completion also works below. Cache remains while any other grant references it, then becomes idle. On verified relay completion the server sends `{"type":"transfer","transfer":{...same grant, status:"ready"}}` **without** `requestId`. Polling download HEAD is allowed.
-
-Failure: `{"type":"transfer-error","requestId":"UUID","transferId":"UUID-if-supplied","error":"CODE"}`. Codes include `identity-required`, `gateway-disabled`, `invalid-request-id`, `not-available`, `manifest-required`, `file-too-large`, `full`, `cache-full`, `busy`, `request-id-conflict`, `invalid-or-revoked-transfer`, `resume-limit`, `rate-limited`, `not-your-transfer`, `invalid-signal`, and asynchronous `hash-mismatch`. Do not silently retry permanent/revoked errors.
-
-Every accepted request/resume/retry renews its **still-valid** grant for 30 minutes without rotating its bearer or UUID; using the same request ID retains its generation. This includes authorized older songs after a cut. Clients renew when expiry is within 60 seconds (throttle 15 seconds); renewed P2P authorization is resent to the owner. Grants that already expired/disconnected cannot renew. Healthy transfer lifetime can exceed an hour while the owner's 90-second listening lease remains fresh. Upload bearers have a two-hour window; the lease sweeper resends an `upload-request` with the same content UUID/token and renewed two-hour expiry within 60 seconds of expiry while active online grants exist. No offline authorization is extended.
-
-Cancellation before a grant response is supported by `{"type":"transfer-cancel","requestId":"UUID","transferId":"optional-known-grant"}`. The active recipient cancels its allocation by request ID and records a five-minute tombstone; delayed requests/retries return `request-canceled`. Limits are 256 tombstones per identity and 8,192 globally (`cancel-limit`); expiry is swept. This prevents orphan allocations when a response races cancellation.
-
-Source terminal HTTP upload failure/retry exhaustion can be reported with `{"type":"upload-error","transferId":"CONTENT-UPLOAD-UUID","error":"local reason"}`. Only its active verified owner can fail that scheduled upload. The server sends dependent recipients `transfer-error` with `error:"upload-failed"`, revokes the upload bearer, frees the owner upload slot, and schedules the next object. Arbitrary client error text is not broadcast. For transient networking failures **do not** report terminal upload-error: retry HEAD/PUT at the acknowledged prefix. Valid relay grant requests reissue the same upload request at most once per 15 seconds while waiting, preserving content ID/token/prefix. Actual WS disconnect still revokes all grants as required.
-
-### Deduplicated owner upload
-
-Only the scheduled uploader receives:
-
-```json
-{"type":"upload-request","transfer":{"id":"CONTENT-UPLOAD-UUID","file":{"id":"PUBLICATION-UUID","name":"song.mp3","size":12345,"ownerId":"OWNER-ID","ownerName":"Visitor","sha256":"HASH","protocolVersion":2},"mode":"relay","token":"OWNER-UPLOAD-BEARER","uploadURL":"https://gateway.example.com/v2/uploads/CONTENT-UPLOAD-UUID","expiresAt":1234567890}}
-```
-
-Here `transfer.id` identifies the deduplicated **content upload**, not a recipient grant. Owner and recipient tokens are different random 256-bit opaque bearers. One relay upload is scheduled per owner; other contents wait in a bounded queue. Retain old source file versions while grants are authorized, even after changing songs. The owner should HEAD to obtain the durable prefix, not assume an ambiguous PUT response failed.
-
-### Grant-bound signaling
-
-```json
-{"type":"signal","to":"PEER-ID","transferId":"GRANT-UUID","generation":1,"data":"{\"transferId\":\"GRANT-UUID\",\"fileId\":\"PUBLICATION-UUID\",\"generation\":1,\"kind\":\"offer\",\"sdp\":\"...\"}"}
-```
-
-Envelope ID/generation and inner JSON string ID/file/generation must agree with the active P2P grant. Sender/target must be its owner/recipient pair. Relay grants, stale sockets, wrong generations, objects instead of inner strings, and unauthorized peers are rejected. Valid inner JSON is forwarded unchanged, with `from`, `transferId`, `generation`. WebRTC payload/checkpoint handling is the client responsibility; gateway byte/hash tests do not validate WebRTC device performance.
-
-Before the recipient response or offer, the owner is sent `{"type":"transfer-authorized","from":"RECIPIENT-ID","transfer":{"id":"GRANT-UUID","file":{...},"mode":"p2p","token":"","expiresAt":1234567890,"generation":1}}`. This authorizes the retained file snapshot and `file-v2:<transferId>` channel without exposing the receiver bearer. The authorization is resent on valid grant resumes/retries with current generation. The recipient uses `transfer.file.ownerId` as its signaling target.
-
-Optional request `mode:"relay"` forces relay admission or atomically upgrades the existing `transferId` from P2P after failed ICE. It preserves grant ID, recipient bearer, manifest, and expiry, releases the P2P slot, and deduplicates relay upload. Capacity failure leaves the original P2P grant valid. Upgrading sends the **owner only** `{"type":"transfer-revoked","transferId":"GRANT-UUID","error":"relay-upgrade"}` to stop its direct channel; the recipient receives the requested relay transfer response and handles fallback rather than a terminal cancellation. Relay cannot be downgraded back to P2P. Invalid mode returns `invalid-mode`.
-
-Connected peers receive terminal `{"type":"transfer-revoked","transferId":"GRANT-UUID","error":"revoked"}` on opt-out/disconnect/replacement, `"expired-or-revoked"` on lease cleanup, or `"released"` when a recipient cancels. An unfinished source upload receives an additional owner-only revocation with its **content-upload UUID** when revoked, failed, or its last recipient grant releases; stop that upload task. Clients **must close that grant's PeerConnection/DataChannel** on these notices. A server cannot unilaterally recall bytes on an already-established direct P2P connection; both authorized clients enforce cancellation locally.
-
-## HTTP gateway API
-
-Every request requires `Authorization: Bearer <role-specific token>`; never put bearer tokens in URLs. No download is served until whole-file SHA-256 verification succeeds. Authorization is checked at admission, before writes, and every **100 ms** by a lease timer; cancellation also sets socket read/write deadlines to interrupt stalled I/O. Already-transmitted/in-flight network bytes cannot be recalled.
-
-| Method and route | Success | Other behavior |
-| --- | --- | --- |
-| `HEAD /v2/uploads/{contentId}` | 200; `Upload-Offset`, `Upload-Length`, `Upload-Status: waiting/ready` | 403 wrong/revoked bearer, unqueued upload or no active grant |
-| `PUT /v2/uploads/{contentId}` | 204; durable `Upload-Offset`; final `Upload-Status: ready` | `Content-Range: bytes start-end/total`, max 1 MiB body. 400 invalid/oversized range/body; 409 gap, overlap or different duplicate bytes; 422 full hash mismatch; 507 cache write/sync failure |
-| `HEAD /v2/transfers/{grantId}/download` | 200 or 206; same headers as GET, no body | 425 waiting (`Retry-After: 1`); 409 p2p-only; 403 wrong/revoked/expired bearer |
-| `GET /v2/transfers/{grantId}/download` | 200 full or 206 range; `Accept-Ranges: bytes`, `Content-Length`, `ETag: "sha256"` | Single `bytes=start-end`, `start-`, and `-suffix` supported. 416 invalid/unsatisfiable/multipart, `Content-Range: bytes */size`. If-Match strong quoted-hash mismatch returns 412; If-Range mismatch requests the full file |
-| `POST /v2/transfers/{grantId}/complete` | 204, idempotent with same bearer until expiry/revocation | Immediately cancels this recipient grant; bounded tombstone retained for retries. Other grants/cache remain intact |
-
-Offsets advance only after file Sync. Retrying an entirely acknowledged chunk compares the stored bytes and does not advance twice. Partial overlaps are rejected; use HEAD and start at the returned prefix. Truncated/overlong HTTP bodies are rejected before writes. Final hash is recomputed by streaming the entire disk file; mismatch revokes dependent grants and deletes the failed object on cleanup. Ready files are immutable.
-
-403 intentionally conflates unknown/revoked/wrong token. 404 unknown route/encoded path traversal. 405 unsupported method. 429 per-grant/content request limit; 503 bounded handler capacity or unavailable cache; `Retry-After: 1` accompanies busy/rate-limited responses. Errors are plain text. No filename Content-Disposition is trusted.
-
-### Default limits
-
-| Resource | Default |
-| --- | --- |
-| Active P2P grants per owner | 2 |
-| Scheduled relay source uploads per owner | 1 |
-| Total grants (including HTTP completion tombstones) | 2,048 |
-| Active grants per owner / recipient | 256 / 4 |
-| Cached objects / queued unfinished objects per owner | 64 / 50 |
-| Maximum file / reserved owner cache / total reserved cache | 2 GiB / 2 GiB / 4 GiB |
-| HTTP concurrent handlers / chunk size | 128 / 1 MiB |
-| Aggregate gateway byte pacing (uploads + downloads) | 64 MiB/sec |
-| Incoming WS messages per socket | 30/sec |
-| HTTP requests per grant or upload token | 120/sec |
-| WS outgoing queue | 128; overflow closes that socket |
-| Renewable grant lifetime / source upload bearer window / idle cache TTL | 30 min / 2 hours / 10 min |
-| Source listening TTL / transfer lease check / cleanup tick | 90 sec / 100 ms / 1 sec |
-| Identity records / manual publications total / per owner | 100,000 / 4,096 / 64 |
-
-Main exposes `-gateway-max-file-bytes`, `-gateway-max-cache-bytes`, `-gateway-max-owner-bytes`, and `-gateway-bytes-per-second`. Other limits are centralized in `DefaultTransferConfig`; smaller configured quotas must remain >= the maximum file. Global handler slots, bounded request bodies, 64 KiB download/hash buffers, content upload serialization, token rate limits, and byte pacing bound server work. No unlimited slow-writer broadcast locks: a dedicated WS writer consumes each bounded queue. Grant/queue/cache full errors are explicit. The backend does not rate-limit iOS P2P bytes; the Swift client now wires source-wide 1 MiB/sec pacing, backpressure, two receiving/two serving slots, and one relay upload.
-
-## TURN and deployment (not applied automatically)
-
-`deploy\nginx.conf` is a TLS reverse-proxy template with same-origin `https://music.webtrc.eu.cc/gateway/v2/...` routes (stripping `/gateway` to the localhost gateway). The additional separate-hostname example is backend-only and **not supported by the Swift App**, which rejects gateway URLs outside the signaling HTTPS origin; use the same-origin route for the App. Query strings and authorization headers are excluded from access logs. Gateway response buffering/cache and request buffering are disabled so revoked streams/chunk prefixes are not hidden by proxy storage. Configure your own certificates/domains, and confirm no upstream CDN buffers/caches requests or ignores cancellation.
-
-`deploy\compose.yaml` and `deploy\coturn.conf` provide a separate coturn deployment on a Linux host with host networking. Supply a strong, **uncommitted** `TURN_REST_SECRET` environment value to both coturn and backend, and set backend `TURN_URLS`, e.g.:
-
-```powershell
-$env:TURN_URLS = 'turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp,turns:turn.example.com:5349?transport=tcp'
-# Obtain TURN_REST_SECRET through your service secret manager; do not paste it into source or shell history.
-```
-
-REST username is `<unix-expiry>:<clientId>` and credential is base64(HMAC-SHA1(secret, username)), expiring in **10 minutes**. The server never embeds the shared secret or sends it to clients. Request a fresh config before expiry; renew/restart ICE as required by the device implementation. Do not issue public static TURN usernames/passwords. Host process/environment and Docker administrator access are trusted; the compose wrapper passes the shared secret to coturn's startup argument. Use protected service secrets and restrict operator access.
-
-Provision coturn TLS files and external public IP/NAT mapping, then open UDP/TCP 3478, TCP 5349, and UDP 49160–49259. Enable UDP 5349 if deploying DTLS URLs. The template denies loopback/private/link-local/multicast peer targets, limits allocations/bandwidth, disables CLI, and has no anonymous authentication. Set actual listening/relay/external IPs in coturn config when NAT requires it. TLS endpoint and UDP reachability must be tested from devices; TURN is a transport fallback, not an offline source or upload deduplication solution.
-
-## Local IP-region lookup
-
-Use `-geoip-db 'C:\GeoIP\GeoLite2-City.mmdb'` or `GEOIP_DB_PATH`; provision a licensed compatible MMDB (e.g. GeoLite2-City / GeoIP2-City).
-- **国内 IP**：提取一级行政区，仅展示具体省份/直辖市/特别行政区（如 `广东省`、`北京市`、`浙江省`、`香港`）。
-- **国外 IP**：展示格式为 `国家-城市`（若城市缺失则回退到 `国家-地区` 或 `国家`，如 `日本-东京`、`美国-洛杉矶`）。
-- 未匹配/内网地址/未配置数据库时展示 `地区未知`。
-
-`-trusted-proxies '127.0.0.1/32,::1/128'` or `TRUSTED_PROXY_CIDRS` should include only actual reverse proxies. No proxy headers are trusted by default; never trust `0.0.0.0/0`. The template overwrites `X-Forwarded-For`; additional upstream proxies require carefully verified real-IP configuration.
-
-No IP is sent to an external lookup service. Only approximate region names are broadcast. Missing DB displays “地区未知”; unreadable configured DB fails startup. Private/unmatched addresses and lookup failures display unknown.
-
-## Verified tests versus proposed device SLOs
-
-`go test ./... -count=1` exercises persisted identities, ownership, stale clients, P2P generations, cut-song grants, opt-out/offline/TTL revocation, hash mismatch, chunk/range/resume, quotas, path traversal, exact restart cleanup, idle cleanup, queue scheduling, and midstream cancellation/lease timer. The real-process integration test starts only its own backend subprocess on isolated loopback ports, drives actual WS config/grants/signals/ready notifications plus HTTP uploads/range downloads, reconnects, and kills only that process. Test artifacts live in UUID-scoped project directories and are cleaned up.
-
-The measured in-process fan-out test admits **100 simultaneous relay recipients plus two P2P reservations**, uploads one physical 180,000-byte source object, concurrently verifies all 100 complete bodies and SHA-256 values, and checks only one cache artifact. It is a correctness/concurrency test, **not** a large-file throughput, WAN speed, 100-device, TURN, Swift backgrounding, packet-loss, or energy benchmark. `verify-listening.cjs` preserves legacy metadata coverage and now checks explicit `invalid-signal` rejection plus absence of unauthorized recipient forwarding for unscoped candidate/offer messages. Run it only against an isolated development service, e.g. `node .\verify-listening.cjs ws://127.0.0.1:18081/ws`. The Go integration test additionally verifies authorized v2 transfers.
-
-Validated in the Windows development environment: `go test ./... -count=1` and `go vet ./...` pass; real-process integration was additionally repeated three times, and fan-out/slow-writer/stream-cancellation regressions five times. `go test -race ./...` was attempted but cannot run here: CGO is disabled and no GCC/Clang is installed. It needs CGO and a working C compiler on a suitable CI runner. TURN/nginx templates have not been deployed or exercised here. `GEOIP_TEST_DB` enables the existing MaxMind fixture-specific lookup test; without it that optional test is skipped.
-
-Proposed **unmeasured** device SLOs: active source, valid retained file, working network and sufficient cache capacity should allow resumable verified downloads; revoke detection should interrupt server output within a timer tick plus scheduling/network delay. Test real iPhones under loss, NAT/TURN, foreground/background, heat, reconnects, and 100-recipient load before claiming device success percentages or latency/throughput targets. A source suspended/offline beyond its lease cannot guarantee completion.
+`-geoip-db` 或 `GEOIP_DB_PATH` 指向 GeoLite2-City 等 MMDB 文件。国内 IP 显示省份（如 `广东省`、`香港`），国外 IP 显示 `国家-城市`，查不到时显示 `地区未知`。不会把 IP 发给外部服务，广场里只出现大致地区。

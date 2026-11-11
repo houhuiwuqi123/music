@@ -80,73 +80,51 @@ function verifySource() {
     verifyViewScopes(view);
     assert.throws(() => verifyViewScopes(view.replace('private struct CandyProfileView', '{ private struct CandyProfileView')));
     verifyStarMotion();
-    assert.ok(service.includes('URLComponents(string: "wss://music.webtrc.eu.cc/ws")'));
-    assert.ok(service.includes('URLQueryItem(name: "id", value: clientID)'));
-    assert.ok(service.includes('15_000_000_000'));
-    assert.ok(service.includes('3_000_000_000'));
-    assert.ok(service.includes('connectionTimeoutTask?.cancel()'));
-    assert.match(service, /let message = try await task.receive\(\)\s+guard self.hasStarted, self.socket === task/);
-    assert.match(service, /case "plaza":\s+connectionTimeoutTask\?\.cancel\(\)[\s\S]*?connectionState = \.connected/);
-    assert.ok(service.includes('files = message.files ?? []'));
-    assert.ok(service.includes('failure.domain') && service.includes('failure.code') && service.includes('HTTPURLResponse'));
-    assert.ok(service.includes('self.disconnect(socket, message:'));
-    assert.ok(service.includes('self.disconnect(task, message:'));
-    assert.ok(transfer.includes('self.peers[grant.id] === peer'));
-    assert.match(service, /func retryConnection\(\) \{\s*stop\(\);\s*start\(\)/);
     assert.ok(!view.includes('plaza.connectionError') && !view.includes('connectionTimeout'));
     assert.ok(!plist.includes('NSExceptionAllowsInsecureHTTPLoads'));
-    assert.ok(service.includes('as? Bool ?? true'));
-    assert.ok(service.includes('userDefaults.set(enabled, forKey: "candy_shares_listening")'));
-    assert.ok(service.includes('var state = sharesListening ? localListening : nil'));
-    assert.ok(service.includes('state?.file = shares.values.first'));
-    assert.ok(service.includes('30_000_000_000'));
-    assert.ok(service.includes('case "listeners":'));
-    assert.ok(service.includes('.filter { $0.clientId != clientID }'));
-    assert.ok(service.includes('if firstSnapshot { sendListening() }'));
-    const listeningUpdate = service.slice(service.indexOf('func updateListening('), service.indexOf('private func sendListening('));
-    assert.ok(!listeningUpdate.includes('artworkData'));
     const rootView = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'RootView.swift'), 'utf8');
     assert.ok(rootView.includes('Publishers.CombineLatest(player.$currentTrack, player.$isPlaying)'));
     assert.ok(rootView.includes('plaza.start()'));
     const settingsView = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'SettingsView.swift'), 'utf8');
     assert.ok(settingsView.includes('plaza.setSharesListening($0)') && view.includes('ForEach(visibleListeners)'));
-    assert.ok(!view.includes('CandyPublishPanelView') && !view.includes('showsPublishPanel'));
-    assert.ok(view.includes('listener.region ?? "地区未知"'));
-    assert.ok(view.includes('.id(listener.id)'));
+    assert.ok(view.includes('listener.region ?? "地区未知"') && view.includes('.id(listener.id)'));
     assert.ok(view.includes('action: { selectedFile = listener.file }'));
-    assert.ok(service.includes('self.transfers.publish(file, url: track.fileURL)'));
-    const automaticShare = service.slice(service.indexOf('private func synchronizeAutomaticShare()'), service.indexOf('func download('));
-    assert.ok(automaticShare.includes('shares.removeAll()'));
-    assert.ok(!automaticShare.includes('removeItem') && !automaticShare.includes('copyItem'));
-    assert.ok(view.includes('paused: listener.isOffline'));
-    assert.ok(view.includes('CandyProfileView'));
+    assert.ok(view.includes('paused: listener.isOffline') && view.includes('.truncationMode(.tail)'));
     assert.ok(view.includes('Button("下载")') && view.includes('Button("取消", role: .cancel)'));
-    assert.ok(view.includes('.truncationMode(.tail)'));
-    assert.doesNotMatch(service, /preview|AVAudioConverter|AVAudioPlayerNode|试听/i);
-    assert.doesNotMatch(view, /preview|试听/i);
-    assert.ok(transfer.includes('dataChannel(forLabel: "file-v2:\\(grant.id)"'));
-    assert.ok(transfer.includes('channel.label == "file-v2:\\(id)"'));
-    assert.ok(service.includes('try identitySecret()') && service.includes('SecItemAdd'));
-    assert.ok(transfer.includes('jobs.count < 2') && transfer.includes('uploads.count < 1'));
-    assert.ok(transfer.includes('incomingBytes + buffer.data.count <= 2_097_152'));
-    assert.ok(transfer.includes('try handle?.synchronize()'));
-    assert.ok(transfer.includes('digest() == file.sha256'));
-    assert.ok(transfer.includes('SHA256.hash') && transfer.includes('prefixHash'));
-    assert.ok(transfer.includes('forHTTPHeaderField: "Range"'));
-    assert.ok(transfer.includes('forHTTPHeaderField: "Content-Range"'));
-    assert.ok(transfer.includes('forHTTPHeaderField: "If-Match"'));
-    assert.ok(transfer.includes('type: "transfer-complete"'));
-    assert.ok(transfer.includes('type: "complete"'));
-    assert.ok(transfer.includes('case "transfer-revoked":'));
-    assert.ok(transfer.includes('job.generation = generation') && transfer.includes('grant.generation == signal.generation'));
-    assert.ok(transfer.includes('job.requestID = UUID().uuidString.lowercased()'));
-    assert.ok(service.includes('type: "share-retire"') && service.includes('type: "lease-refresh"'));
-    assert.ok(transfer.includes('type: "source-unavailable"') && transfer.includes('type: "upload-error"'));
-    assert.ok(transfer.includes('func publish(') && !transfer.slice(transfer.indexOf('func publish('), transfer.indexOf('func withdraw(')).includes('closePeer'));
+    assert.ok(view.includes('plaza.cancelDownload(download.id)') && view.includes('plaza.retryDownload(download.file)'));
+
+    // DHT protocol: the Go node, the Vue client and the iOS app must agree byte-for-byte.
+    const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
+    const go = read('backend', 'internal', 'node', 'protocol.go') + read('backend', 'internal', 'node', 'plaza.go') + read('backend', 'internal', 'node', 'session.go');
+    const web = read('web', 'src', 'lib', 'network.ts') + read('web', 'src', 'lib', 'transfer.ts') + read('web', 'src', 'lib', 'content.ts') + read('web', 'src', 'lib', 'plaza.ts');
+    for (const value of ['/auru/kad/1.0.0', '/auru/signal/1.0.0', '/auru/resolve/1.0.0', '/auru/plaza/1.0.0', 'auru/plaza/1']) {
+        assert.ok(go.includes(`"${value}"`) || go.includes(`${value.split('/').pop()}`), `Go missing ${value}`);
+        assert.ok(web.includes(`'${value}'`), `web missing ${value}`);
+    }
+    for (const prefix of ['auru-plaza:', 'auru-node-auth:']) {
+        assert.ok(go.includes(`"${prefix}"`), `Go missing ${prefix}`);
+        assert.ok(service.includes(`"${prefix}"`), `Swift missing ${prefix}`);
+    }
+    assert.ok(web.includes("SIGNATURE_PREFIX = 'auru-plaza:'"));
+    assert.ok(transfer.includes('let candyChannelLabel = "auru-file/1"') && web.includes("CHANNEL_LABEL = 'auru-file/1'"));
+    assert.ok(transfer.includes('let candyBlockSize = 1_048_576') && web.includes('BLOCK_SIZE = 1024 * 1024'));
+    assert.ok(transfer.includes('let candyChunkSize = 65_536') && web.includes('CHUNK_SIZE = 64 * 1024'));
+    for (const field of ['"get"', '"meta"', '"end"', '"done"', '"error"']) {
+        assert.ok(transfer.includes(`t: ${field}`) || transfer.includes(`.t == ${field}`), `Swift wire message ${field}`);
+    }
+    assert.ok(service.includes('Data([0x08, 0x01, 0x12, 0x20])') && service.includes('Data([0x00, 0x24])'), 'libp2p Ed25519 peer ID encoding');
+    assert.ok(service.includes('[0x01, 0x55, 0x12, 0x20]'), 'CIDv1 raw sha2-256 prefix');
+    assert.ok(service.includes('kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly') && service.includes('Curve25519.Signing.PrivateKey'));
+    assert.ok(service.includes('NWPathMonitor()') && service.includes('transfers.networkChanged()'), 'reconnect on network switch');
+    assert.ok(service.includes('willEnterForegroundNotification'));
+    assert.ok(service.includes('https://music.webtrc.eu.cc/api/bootstrap') && service.includes('wss://music.webtrc.eu.cc/ws'));
+    assert.ok(transfer.includes('func rewind(to target: Int64)') && transfer.includes('digest == blocks[blockIndex]'));
+    assert.ok(transfer.includes('digest() == file.sha256') && transfer.includes('try handle?.synchronize()'));
+    assert.doesNotMatch(service + transfer, /file-v2|transfer-request|share-retire|lease-refresh|gateway\/v2/, 'old hub protocol must be gone');
     const project = fs.readFileSync(path.join(root, 'MusicPlayer.xcodeproj', 'project.pbxproj'), 'utf8');
     assert.equal((project.match(/CandyReliableTransfer.swift in Sources/g) || []).length, 2);
-    assert.ok(view.includes('plaza.cancelDownload(download.id)') && view.includes('plaza.retryDownload(download.file)'));
-    assert.ok(service.includes('now - $0 >= 60'));
+    assert.equal((project.match(/CandyPlazaService.swift in Sources/g) || []).length, 2);
+    assert.ok(service.includes('now - $0.value >= 60'));
     console.log('PASS: client source/config regression checks (not a Swift build).');
 }
 
@@ -194,7 +172,7 @@ function verifyPublicSnapshot(address) {
             hostname: address,
             servername: 'music.webtrc.eu.cc',
             port: 443,
-            path: `/ws?id=${crypto.randomUUID()}`,
+            path: '/ws',
             headers: {
                 Host: 'music.webtrc.eu.cc',
                 Connection: 'Upgrade',
@@ -203,7 +181,7 @@ function verifyPublicSnapshot(address) {
                 'Sec-WebSocket-Key': key
             }
         });
-        const timer = setTimeout(() => finish(new Error('No WebSocket snapshot within 30 seconds')), 30000);
+        const timer = setTimeout(() => finish(new Error('No gateway challenge within 30 seconds')), 30000);
         request.on('error', finish);
         request.on('response', response => {
             response.resume();
@@ -223,7 +201,7 @@ function verifyPublicSnapshot(address) {
                 try {
                     data = Buffer.concat([data, chunk]);
                     if (data.length < 2) return;
-                    assert.equal(data[0], 0x81, 'Expected an unfragmented JSON text snapshot');
+                    assert.equal(data[0], 0x81, 'Expected an unfragmented JSON text frame');
                     assert.equal(data[1] & 0x80, 0, 'Server frame must not be masked');
                     let length = data[1] & 0x7f;
                     let offset = 2;
@@ -234,15 +212,15 @@ function verifyPublicSnapshot(address) {
                     } else if (length === 127) {
                         if (data.length < 10) return;
                         const size = data.readBigUInt64BE(2);
-                        assert.ok(size <= 1048576n, 'Snapshot exceeds test limit');
+                        assert.ok(size <= 1048576n, 'Frame exceeds test limit');
                         length = Number(size);
                         offset = 10;
                     }
                     if (data.length < offset + length) return;
                     const message = JSON.parse(data.subarray(offset, offset + length).toString('utf8'));
-                    assert.equal(message.type, 'plaza');
-                    assert.ok(message.files === undefined || Array.isArray(message.files));
-                    console.log(`PASS: public ${address}, TLS handshake, HTTP 101 and plaza snapshot (${(message.files || []).length} files).`);
+                    assert.equal(message.type, 'challenge', 'Gateway must open with an Ed25519 login challenge');
+                    assert.ok(message.nonce && message.node && message.node.peerId.startsWith('12D3KooW'));
+                    console.log(`PASS: public ${address}, TLS handshake, HTTP 101 and node challenge (node ${message.node.peerId}).`);
                     finish();
                 } catch (error) {
                     finish(error);
@@ -250,7 +228,7 @@ function verifyPublicSnapshot(address) {
             };
             socket.on('data', receive);
             socket.on('error', finish);
-            socket.on('end', () => finish(new Error('Socket closed before snapshot')));
+            socket.on('end', () => finish(new Error('Socket closed before challenge')));
             receive(head);
         });
         request.end();
