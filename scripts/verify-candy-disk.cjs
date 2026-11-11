@@ -52,7 +52,7 @@ async function main() {
         const { verifyEnvelope } = await import(pathToFileURL(path.join(root, 'web', 'src', 'lib', 'plaza.ts')).href);
         const body = await verifyEnvelope(JSON.parse(envelopeLine.slice('ENVELOPE:'.length)));
         assert.equal(body.peerId, '12D3KooWA4Xop1JaT3MHxwYMkCepYsv4iPVopMXwCz5iHYdBfeSB');
-        console.log('PASS: Swift envelope verified by the JS/libp2p implementation (requires `npm install` in web/).');
+        console.log('PASS: Swift envelope verified by the JS/libp2p implementation.');
     } finally {
         fs.rmSync(folder, { recursive: true, force: true });
     }
