@@ -26,7 +26,21 @@ Kademlia 只接受“自己宣告自己”的 provider 记录（`handleAddProvid
 4. **连接**：下载方生成完整的 SDP offer（非 trickle，候选收集完再发），经节点送到提供方；提供方回 answer 后建立 DataChannel 直连。
 5. **传输**：`get(offset)` → `meta`（包含每 1 MiB 块的哈希）→ 二进制分片 → `end` → `done`。接收方每满一块就校验，最后再用 CID 里的整文件 SHA-256 校验。断线后从最后一个已校验块续传。
 
-## 构建与运行
+## 部署（服务器）
+
+仓库根目录的 `deploy.sh` 负责编译、安装和服务管理（需要 root，默认安装目录 `/www/wwwroot/webtrc`）：
+
+```bash
+sudo ./deploy.sh install     # 编译节点和网页，安装二进制、web/dist、systemd 服务（运行中则自动重启）
+sudo ./deploy.sh start|stop|restart
+./deploy.sh status           # 服务状态和监听端口
+./deploy.sh logs             # 跟踪日志
+./deploy.sh check            # 自检 /api/bootstrap、/api/ice、GeoIP 文件、p2p 域名解析
+```
+
+域名说明：`music.webtrc.eu.cc` 走 Cloudflare 代理，承载网页、API、iOS 网关和浏览器的 libp2p wss（nginx 模板 `deploy/nginx.conf`）；`p2p.webtrc.eu.cc` 是仅 DNS 记录，只用于节点之间的 4001 端口，见 [deploy/p2p-domain.md](deploy/p2p-domain.md)。
+
+## 构建与运行（本地）
 
 ```powershell
 Set-Location 'C:\phpwork\music\backend'
@@ -34,7 +48,7 @@ go test ./... -count=1
 go build -o server.exe .
 .\server.exe -http 127.0.0.1:8080 -key .\state\node.key `
   -listen '/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1,/ip4/127.0.0.1/tcp/4002/ws' `
-  -announce '/dns4/music.webtrc.eu.cc/tcp/8443/wss,/ip4/<公网IP>/tcp/4001,/ip4/<公网IP>/udp/4001/quic-v1' `
+  -announce '/dns4/music.webtrc.eu.cc/tcp/8443/wss,/dns4/p2p.webtrc.eu.cc/tcp/4001,/dns4/p2p.webtrc.eu.cc/udp/4001/quic-v1' `
   -gateway-url 'wss://music.webtrc.eu.cc/ws' -web-dir ..\web\dist -geoip-db .\GeoLite2-City2.mmdb
 ```
 
@@ -53,7 +67,7 @@ go build -o server.exe .
 
 ### 增加一台节点
 
-在另一台服务器上用同样的方式启动，并设置 `NODE_BOOTSTRAP=/ip4/<第一台公网IP>/tcp/4001/p2p/<第一台peerId>`（peer ID 可从启动日志或 `/api/bootstrap` 获取）。两台节点会互相进入对方的路由表，GossipSub 会跨节点同步广场，任意节点上的 `GET_PROVIDERS` 都能查到另一台节点上的终端。客户端从 `/api/bootstrap` 自动获知新节点。
+在另一台服务器上用同样的方式启动，并设置 `NODE_BOOTSTRAP=/dns4/p2p.webtrc.eu.cc/tcp/4001/p2p/<第一台peerId>`（peer ID 可从启动日志或 `/api/bootstrap` 获取，详见 [deploy/p2p-domain.md](deploy/p2p-domain.md)）。两台节点会互相进入对方的路由表，GossipSub 会跨节点同步广场，任意节点上的 `GET_PROVIDERS` 都能查到另一台节点上的终端。客户端从 `/api/bootstrap` 自动获知新节点。
 
 ## HTTP 接口
 
