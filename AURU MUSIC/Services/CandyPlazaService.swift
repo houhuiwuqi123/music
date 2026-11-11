@@ -416,14 +416,16 @@ final class CandyPlazaService: ObservableObject {
             let satisfied = path.status == .satisfied
             let kinds: [NWInterface.InterfaceType] = [.wifi, .cellular, .wiredEthernet, .other]
             let signature = "\(satisfied)|" + kinds.filter { path.usesInterfaceType($0) }.map { "\($0)" }.joined(separator: ",")
-            Task { @MainActor in self?.pathChanged(satisfied: satisfied, signature: signature) }
+            guard let service = self else { return }
+            Task { @MainActor in service.pathChanged(satisfied: satisfied, signature: signature) }
         }
         pathMonitor.start(queue: DispatchQueue(label: "candy.path"))
         foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification,
             object: nil, queue: .main) { [weak self] _ in
+            guard let service = self else { return }
             Task { @MainActor in
-                guard let self, self.hasStarted else { return }
-                if self.connectionState == .disconnected { self.reconnectNow() } else { self.announce() }
+                guard service.hasStarted else { return }
+                if service.connectionState == .disconnected { service.reconnectNow() } else { service.announce() }
             }
         }
         timers = [
@@ -641,10 +643,10 @@ final class CandyPlazaService: ObservableObject {
     private func send(_ message: CandyGatewayMessage) {
         guard let socket, let data = try? encoder.encode(message) else { return }
         socket.send(.string(String(decoding: data, as: UTF8.self))) { [weak self] error in
-            guard error != nil else { return }
+            guard error != nil, let service = self else { return }
             Task { @MainActor in
-                guard let self, self.socket === socket else { return }
-                self.connectionLost("发送失败")
+                guard service.socket === socket else { return }
+                service.connectionLost("发送失败")
             }
         }
     }
