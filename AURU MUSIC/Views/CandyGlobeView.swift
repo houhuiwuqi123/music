@@ -9,17 +9,24 @@ struct CandyGlobeMarker: Identifiable, Equatable {
     var latitude: Double
     var longitude: Double
     var online: Bool
+    /// Someone here is playing a song right now: the dot glows and pulses.
+    var playing: Bool = false
     var count: Int
 }
 
-/// A slowly turning, draggable globe (SceneKit). Land comes from the Natural Earth
+/// A slowly turning, draggable, pinch-zoomable globe (SceneKit). Land comes from the Natural Earth
 /// 110m outlines in CandyEarthLand, painted into an equirectangular texture. The sphere
 /// mesh and the marker positions share one lat/lon mapping, so they always line up.
 struct CandyGlobeView: UIViewRepresentable {
     var markers: [CandyGlobeMarker]
     var selectedID: String?
     var dark: Bool
+    /// 1 shows the whole globe; up to `CandyGlobeView.maxZoom` magnifies it.
+    var zoom: Double = 1
+    var onZoom: (Double) -> Void = { _ in }
     var onSelect: (String?) -> Void
+
+    static let maxZoom: Double = 5
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -35,6 +42,8 @@ struct CandyGlobeView: UIViewRepresentable {
     func updateUIView(_ view: SCNView, context: Context) {
         let coordinator = context.coordinator
         coordinator.onSelect = onSelect
+        coordinator.onZoom = onZoom
+        coordinator.setZoom(Float(zoom))
         coordinator.apply(markers: markers, selectedID: selectedID, dark: dark)
     }
 
@@ -45,8 +54,9 @@ struct CandyGlobeView: UIViewRepresentable {
     // MARK: - Coordinator
 
     @MainActor
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var onSelect: ((String?) -> Void)?
+        var onZoom: ((Double) -> Void)?
 
         private let scene = SCNScene()
         private let camera = SCNNode()
@@ -63,6 +73,9 @@ struct CandyGlobeView: UIViewRepresentable {
         private var target: (yaw: Float, pitch: Float)?
         private var dragging = false
         private var idleSince = CACurrentMediaTime()
+        private var zoom: Float = 1
+        private var zoomTarget: Float = 1
+        private var pinchStart: Float = 1
 
         private var dark: Bool?
         private var markers: [CandyGlobeMarker] = []
@@ -104,7 +117,12 @@ struct CandyGlobeView: UIViewRepresentable {
             self.view = view
             view.scene = scene
             view.pointOfView = camera
-            view.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(pan(_:))))
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(pan(_:)))
+            let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinch(_:)))
+            pan.delegate = self
+            pinch.delegate = self
+            view.addGestureRecognizer(pan)
+            view.addGestureRecognizer(pinch)
             view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tap(_:))))
             let link = CADisplayLink(target: WeakTarget(self), selector: #selector(WeakTarget.step(_:)))
             link.preferredFramesPerSecond = 30
@@ -131,6 +149,12 @@ struct CandyGlobeView: UIViewRepresentable {
             }
             if newSelection != selectedID, let id = newSelection, let marker = newMarkers.first(where: { $0.id == id }) {
                 focus(latitude: marker.latitude, longitude: marker.longitude)
+                // Pull in close enough to tell neighbouring places apart.
+                if zoomTarget < 2.5 {
+                    zoomTarget = 2.5
+                    let report = onZoom
+                    DispatchQueue.main.async { report?(2.5) }
+                }
             }
             guard newMarkers != markers || newSelection != selectedID else { return }
             markers = newMarkers
@@ -156,8 +180,10 @@ struct CandyGlobeView: UIViewRepresentable {
 
         private func makeMarker(_ marker: CandyGlobeMarker, selected: Bool) -> SCNNode {
             let isDark = dark ?? false
-            let base: UIColor = marker.online ? (isDark ? .white : UIColor(white: 0.08, alpha: 1))
-                : UIColor(white: isDark ? 0.55 : 0.62, alpha: 1)
+            // Online places light up warm like city lights; places where someone is playing glow brightest.
+            let lit = marker.playing ? UIColor(red: 1, green: 0.5, blue: 0.05, alpha: 1)
+                : UIColor(red: 1, green: 0.7, blue: 0.18, alpha: 1)
+            let base: UIColor = marker.online ? lit : UIColor(white: isDark ? 0.5 : 0.66, alpha: 1)
             let color = selected ? UIColor.systemPink : base
             let size = CGFloat(selected ? 0.034 : min(0.03, 0.018 + 0.003 * Double(max(0, marker.count - 1))))
 
@@ -174,20 +200,23 @@ struct CandyGlobeView: UIViewRepresentable {
             dot.firstMaterial?.lightingModel = .constant
             dot.firstMaterial?.isDoubleSided = true
             node.addChildNode(SCNNode(geometry: dot))
+            node.scale = markerScale
 
             if marker.online {
-                let halo = SCNPlane(width: size * 3.2, height: size * 3.2)
-                halo.cornerRadius = size * 1.6
-                halo.firstMaterial?.diffuse.contents = color.withAlphaComponent(selected ? 0.35 : 0.22)
+                let halo = SCNPlane(width: size * 3.4, height: size * 3.4)
+                halo.cornerRadius = size * 1.7
+                halo.firstMaterial?.diffuse.contents = color.withAlphaComponent(selected ? 0.4 : (marker.playing ? 0.4 : 0.25))
                 halo.firstMaterial?.lightingModel = .constant
                 halo.firstMaterial?.writesToDepthBuffer = false
+                // On the dark globe additive blending makes the halo read as emitted light.
+                halo.firstMaterial?.blendMode = isDark ? .add : .alpha
                 let haloNode = SCNNode(geometry: halo)
                 haloNode.position = SCNVector3(0, 0, -0.001)
                 let pulse = SCNAction.sequence([
                     .group([.scale(to: 1.25, duration: 1.1), .fadeOpacity(to: 0.15, duration: 1.1)]),
                     .group([.scale(to: 0.8, duration: 0.01), .fadeOpacity(to: 1, duration: 0.01)]),
                 ])
-                haloNode.runAction(.repeatForever(pulse))
+                if marker.playing || selected { haloNode.runAction(.repeatForever(pulse)) }
                 node.addChildNode(haloNode)
             }
 
@@ -215,6 +244,11 @@ struct CandyGlobeView: UIViewRepresentable {
             let now = link.timestamp
             let dt = Float(lastFrame == 0 ? 0 : min(0.1, now - lastFrame))
             lastFrame = now
+            if abs(zoomTarget - zoom) > 0.001 {
+                zoom += (zoomTarget - zoom) * min(1, dt * 8)
+                if abs(zoomTarget - zoom) <= 0.001 { zoom = zoomTarget }
+                applyZoom()
+            }
             guard !dragging else { return }
             if let goal = target {
                 let k = min(1, dt * 5)
@@ -222,9 +256,51 @@ struct CandyGlobeView: UIViewRepresentable {
                 pitch += (goal.pitch - pitch) * k
                 if abs(goal.yaw - yaw) < 0.001 && abs(goal.pitch - pitch) < 0.001 { target = nil }
                 applyRotation()
-            } else if selectedID == nil, now - idleSince > 2 {
+            } else if selectedID == nil, zoomTarget < 1.2, now - idleSince > 2 {
                 yaw += dt * 0.06
                 applyRotation()
+            }
+        }
+
+        /// SwiftUI asked for a zoom level (the +/- buttons, or the echo of our own pinch).
+        func setZoom(_ value: Float) {
+            let clamped = max(1, min(Float(CandyGlobeView.maxZoom), value))
+            guard abs(clamped - zoomTarget) > 0.001 else { return }
+            zoomTarget = clamped
+            idleSince = CACurrentMediaTime()
+        }
+
+        /// Dots shrink less than the globe grows, so they stay tappable but tell close places apart.
+        private var markerScale: SCNVector3 {
+            let s = pow(zoom, -0.65)
+            return SCNVector3(s, s, s)
+        }
+
+        private func applyZoom() {
+            camera.camera?.orthographicScale = Double(1.1 / zoom)
+            let scale = markerScale
+            markerNodes.values.forEach { $0.scale = scale }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            // Pan and pinch on the globe together; nothing else (the scroll view keeps its own gestures).
+            gestureRecognizer.view === other.view
+                && (gestureRecognizer is UIPinchGestureRecognizer || other is UIPinchGestureRecognizer)
+        }
+
+        @objc private func pinch(_ gesture: UIPinchGestureRecognizer) {
+            switch gesture.state {
+            case .began:
+                pinchStart = zoomTarget
+                target = nil
+            case .changed:
+                zoomTarget = max(1, min(Float(CandyGlobeView.maxZoom), pinchStart * Float(gesture.scale)))
+                zoom = zoomTarget
+                applyZoom()
+            default:
+                idleSince = CACurrentMediaTime()
+                onZoom?(Double(zoomTarget))
             }
         }
 
@@ -242,7 +318,7 @@ struct CandyGlobeView: UIViewRepresentable {
             case .changed:
                 let translation = gesture.translation(in: view)
                 gesture.setTranslation(.zero, in: view)
-                let scale = Float(2.2 / max(1, view.bounds.width))
+                let scale = Float(2.2 / max(1, view.bounds.width)) / zoom
                 yaw += Float(translation.x) * scale
                 pitch = max(-1.2, min(1.2, pitch + Float(translation.y) * scale))
                 applyRotation()

@@ -5,10 +5,13 @@ struct CandyPlazaView: View {
     @EnvironmentObject private var plaza: CandyPlazaService
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var player: MusicPlayerViewModel
+    @EnvironmentObject private var library: LocalMusicLibrary
     @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
     @State private var selectedFile: CandyPlazaFile?
     @State private var selectedPlace: String?
+    @State private var zoom: Double = 1
+    @State private var importing: Set<UUID> = []
     @State private var showsProfile = false
 
     private var visibleListeners: [CandyPlazaListening] {
@@ -32,6 +35,7 @@ struct CandyPlazaView: View {
             var marker = places[key] ?? CandyGlobeMarker(id: key, latitude: lat, longitude: lon, online: false, count: 0)
             marker.count += 1
             marker.online = marker.online || !listener.isOffline
+            marker.playing = marker.playing || (!listener.isOffline && listener.isPlaying)
             places[key] = marker
         }
         return places.values.sorted { $0.id < $1.id }
@@ -145,7 +149,6 @@ struct CandyPlazaView: View {
 
     private var globeCard: some View {
         let dark = colorScheme == .dark
-        let online = visibleListeners.filter { !$0.isOffline }.count
         let places = markers
         return ZStack {
             // Soft rim glow behind the sphere, as in the reference artwork.
@@ -153,18 +156,19 @@ struct CandyPlazaView: View {
                 .fill(dark ? Color.white.opacity(0.06) : Color(red: 1, green: 0.98, blue: 0.9))
                 .padding(18)
                 .shadow(color: dark ? Color.white.opacity(0.12) : Color(red: 1, green: 0.93, blue: 0.7).opacity(0.9), radius: 22)
-            CandyGlobeView(markers: places, selectedID: selectedPlace, dark: dark) { id in
+            CandyGlobeView(markers: places, selectedID: selectedPlace, dark: dark, zoom: zoom,
+                           onZoom: { zoom = $0 }) { id in
                 withAnimation(.easeInOut(duration: 0.2)) { selectedPlace = id }
             }
             .padding(18)
-            VStack(alignment: .trailing, spacing: 3) {
-                Text("\(online)").font(.system(.title3, design: .rounded).weight(.bold)).monospacedDigit()
-                Text("在线").font(.caption2).foregroundStyle(.secondary)
-                Text("\(places.filter(\.online).count) 个地点").font(.caption2).foregroundStyle(.secondary)
+            zoomControls
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(12)
+            if let selectedPlace {
+                placeChip(selectedPlace)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .padding(12)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-            .padding(14)
-            .allowsHitTesting(false)
             if visibleListeners.isEmpty {
                 Text(plaza.connectionState == .connected ? "暂时没有人在线" : plaza.connectionState.title)
                     .font(.caption.weight(.semibold))
@@ -181,6 +185,51 @@ struct CandyPlazaView: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         }
+    }
+
+    private var zoomControls: some View {
+        VStack(spacing: 0) {
+            Button {
+                zoom = min(CandyGlobeView.maxZoom, zoom * 1.6)
+            } label: {
+                Image(systemName: "plus").frame(width: 34, height: 34)
+            }
+            .disabled(zoom >= CandyGlobeView.maxZoom - 0.01)
+            Divider().frame(width: 20)
+            Button {
+                zoom = zoom / 1.6 < 1.05 ? 1 : zoom / 1.6
+            } label: {
+                Image(systemName: "minus").frame(width: 34, height: 34)
+            }
+            .disabled(zoom <= 1.001)
+        }
+        .font(.subheadline.weight(.semibold))
+        .buttonStyle(.plain)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("缩放地球")
+    }
+
+    private func placeChip(_ key: String) -> some View {
+        let people = visibleListeners.filter { Self.placeKey($0) == key }
+        let playing = people.contains { !$0.isOffline && $0.isPlaying }
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(playing ? Color.orange : Color.gray)
+                .frame(width: 7, height: 7)
+            Text(people.first?.region ?? "所选地点").font(.caption.weight(.semibold)).lineLimit(1)
+            Text("\(people.count)人").font(.caption2).foregroundStyle(.secondary)
+            Button {
+                withAnimation { selectedPlace = nil }
+            } label: {
+                Image(systemName: "xmark").font(.caption2.weight(.bold))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("取消选择地点")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: Capsule())
     }
 
     // MARK: Users
@@ -209,7 +258,7 @@ struct CandyPlazaView: View {
                 CandyListenerRow(
                     listener: listener,
                     transfer: listener.file.flatMap { plaza.downloads[$0.id] },
-                    isPreviewing: listener.file != nil && plaza.preview.file?.id == listener.file?.id,
+                    preview: plaza.preview,
                     locate: Self.placeKey(listener).map { key -> () -> Void in { withAnimation { selectedPlace = key } } },
                     listen: {
                         guard let file = listener.file else { return }
@@ -258,13 +307,12 @@ struct CandyPlazaView: View {
                             ShareLink(item: url) {
                                 Image(systemName: "square.and.arrow.up")
                             }
+                            importButton(entry, url: url)
+                        } else {
+                            Text("文件已移除")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                        Text("已完成")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.green)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.green.opacity(0.13), in: Capsule())
                     }
                     .padding(11)
                     .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
@@ -273,6 +321,47 @@ struct CandyPlazaView: View {
         }
         .padding(15)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+    }
+
+    /// Received songs live in Documents/Candy Downloads; importing copies one into the music library.
+    @ViewBuilder
+    private func importButton(_ entry: CandyPlazaHistory, url: URL) -> some View {
+        if isInLibrary(url) {
+            Text("已导入")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.green)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.green.opacity(0.13), in: Capsule())
+        } else if importing.contains(entry.id) {
+            ProgressView().controlSize(.small)
+        } else {
+            Button {
+                importing.insert(entry.id)
+                Task { @MainActor in
+                    await library.importFiles(from: [url])
+                    importing.remove(entry.id)
+                }
+            } label: {
+                Label("导入", systemImage: "square.and.arrow.down")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.purple.opacity(0.16), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(library.isImporting || !LocalMusicLibrary.supportedAudioExtensions.contains(url.pathExtension.lowercased()))
+        }
+    }
+
+    /// The library either indexed the received file itself or holds an imported copy of it.
+    private func isInLibrary(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        let name = url.deletingPathExtension().lastPathComponent
+        return library.tracks.contains { track in
+            track.fileURL.standardizedFileURL.path == path
+                || track.fileURL.deletingPathExtension().lastPathComponent == name
+        }
     }
 
     private var transferTasks: some View {
@@ -318,7 +407,7 @@ struct CandyPlazaView: View {
 private struct CandyListenerRow: View {
     let listener: CandyPlazaListening
     let transfer: CandyPlazaDownload?
-    let isPreviewing: Bool
+    let preview: CandyPreviewPlayer
     let locate: (() -> Void)?
     let listen: () -> Void
     let download: () -> Void
@@ -351,15 +440,12 @@ private struct CandyListenerRow: View {
                 }
             }
             Spacer(minLength: 4)
-            Button(action: listen) {
-                Label(isPreviewing ? "试听中" : "听听看", systemImage: isPreviewing ? "waveform" : "play.fill")
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background((isPreviewing ? Color.pink : Color.purple).opacity(0.16), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(listener.file == nil || (listener.isOffline && !isDownloaded) || isPreviewing)
+            CandyListenButton(
+                preview: preview,
+                fileID: listener.file?.id,
+                enabled: listener.file != nil && (!listener.isOffline || isDownloaded),
+                listen: listen
+            )
             Button(action: download) {
                 Image(systemName: isDownloaded ? "checkmark.circle.fill" : "arrow.down.circle")
                     .font(.title3)
@@ -394,6 +480,65 @@ private struct CandyListenerRow: View {
             .fill(listener.isOffline ? Color.gray : Color.green)
             .frame(width: 10, height: 10)
             .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 2))
+    }
+}
+
+/// "听听看" until tapped; then an equalizer that dances while the preview plays.
+/// Tapping it again pauses or resumes that preview.
+private struct CandyListenButton: View {
+    @ObservedObject var preview: CandyPreviewPlayer
+    let fileID: String?
+    let enabled: Bool
+    let listen: () -> Void
+
+    private var isCurrent: Bool { fileID != nil && preview.file?.id == fileID }
+
+    private var isFailed: Bool {
+        if case .failed = preview.phase { return true }
+        return false
+    }
+
+    var body: some View {
+        Button {
+            if isCurrent { preview.toggle() } else { listen() }
+        } label: {
+            Group {
+                if isCurrent && isFailed {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                } else if isCurrent {
+                    CandyEqualizer(animating: preview.phase == .playing)
+                } else {
+                    Label("听听看", systemImage: "play.fill")
+                }
+            }
+            .font(.caption.weight(.bold))
+            .foregroundStyle(isCurrent ? Color.pink : Color.primary)
+            .frame(minWidth: isCurrent ? 44 : nil, minHeight: 16)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background((isCurrent ? Color.pink : Color.purple).opacity(0.16), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled && !isCurrent)
+        .animation(.easeInOut(duration: 0.2), value: isCurrent)
+        .accessibilityLabel(isCurrent ? (preview.phase == .playing ? "暂停试听" : "继续试听") : "听听看")
+    }
+}
+
+private struct CandyEqualizer: View {
+    let animating: Bool
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animating)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .bottom, spacing: 2.5) {
+                ForEach(0..<4, id: \.self) { bar in
+                    let level = animating ? (sin(t * (6 + Double(bar) * 1.9) + Double(bar) * 1.3) + 1) / 2 : 0.3
+                    Capsule().frame(width: 3, height: 4 + 11 * level)
+                }
+            }
+            .frame(height: 15, alignment: .bottom)
+        }
     }
 }
 

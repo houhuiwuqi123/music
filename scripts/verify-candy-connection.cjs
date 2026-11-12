@@ -82,6 +82,13 @@ function verifyGlobe() {
     assert.ok(transfer.indexOf('guard digest == blocks[blockIndex]') < transfer.indexOf('reportVerified(job, min(size'), 'report after the block check');
     assert.ok(service.includes('preview.stream(file, partial: transfers.partialURL(for: file)'));
     assert.ok(view.includes('plaza.listen(file)') && view.includes('if playing { plaza.preview.pause() }'));
+
+    // Zoom (pinch + buttons), lit playing places, animated listen button, import of received songs.
+    assert.ok(globe.includes('UIPinchGestureRecognizer') && globe.includes('camera.camera?.orthographicScale = Double(1.1 / zoom)'));
+    assert.ok(view.includes('marker.playing = marker.playing || (!listener.isOffline && listener.isPlaying)'));
+    assert.ok(view.includes('CandyEqualizer(animating: preview.phase == .playing)'));
+    assert.ok(view.includes('await library.importFiles(from: [url])'));
+    assert.ok(!view.includes('个地点'), 'online/place counts are not shown');
 }
 
 function verifySource() {
