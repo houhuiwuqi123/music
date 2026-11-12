@@ -12,6 +12,10 @@ struct CandyPlazaView: View {
     @State private var selectedPlace: String?
     @State private var zoom: Double = 1
     @State private var importing: Set<UUID> = []
+    /// 0 shows the first page in the usual order; any other value is a random draw.
+    @State private var shuffleSeed = 0
+
+    private static let pageSize = 10
     @State private var showsProfile = false
 
     private var visibleListeners: [CandyPlazaListening] {
@@ -53,6 +57,26 @@ struct CandyPlazaView: View {
     private var listedListeners: [CandyPlazaListening] {
         guard let selectedPlace else { return visibleListeners }
         return visibleListeners.filter { Self.placeKey($0) == selectedPlace }
+    }
+
+    /// At most 10 rows. With more users, 随机 draws another 10 (online users first);
+    /// the draw is stable between redraws until the button is tapped again.
+    private var shownListeners: [CandyPlazaListening] {
+        let all = listedListeners
+        guard all.count > Self.pageSize else { return all }
+        guard shuffleSeed != 0 else { return Array(all.prefix(Self.pageSize)) }
+        let seed = shuffleSeed
+        func draw(_ listener: CandyPlazaListening) -> Int {
+            var hasher = Hasher()
+            hasher.combine(seed)
+            hasher.combine(listener.clientId)
+            return hasher.finalize()
+        }
+        let picked = all.sorted { lhs, rhs in
+            if lhs.isOffline != rhs.isOffline { return !lhs.isOffline }
+            return draw(lhs) < draw(rhs)
+        }
+        return Array(picked.prefix(Self.pageSize))
     }
 
     var body: some View {
@@ -249,11 +273,13 @@ struct CandyPlazaView: View {
                 if selectedPlace != nil {
                     Label(listedListeners.first?.region ?? "所选地点", systemImage: "mappin.and.ellipse").font(.headline)
                     Spacer()
+                    shuffleButton
                     Button("全部") { withAnimation { selectedPlace = nil } }
                         .font(.caption.weight(.semibold))
                 } else {
                     Text("在线用户").font(.headline)
                     Spacer()
+                    shuffleButton
                     Text("\(visibleListeners.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
@@ -263,7 +289,7 @@ struct CandyPlazaView: View {
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 8)
             }
-            ForEach(listedListeners) { listener in
+            ForEach(shownListeners) { listener in
                 CandyListenerRow(
                     listener: listener,
                     transfer: listener.file.flatMap { plaza.downloads[$0.id] },
@@ -280,6 +306,23 @@ struct CandyPlazaView: View {
         }
         .padding(15)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+    }
+
+    @ViewBuilder
+    private var shuffleButton: some View {
+        if listedListeners.count > Self.pageSize {
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) { shuffleSeed = Int.random(in: 1...Int.max) }
+            } label: {
+                Label("随机", systemImage: "shuffle")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.purple.opacity(0.14), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("随机显示另外 \(Self.pageSize) 位用户")
+        }
     }
 
     private var receiveHistory: some View {

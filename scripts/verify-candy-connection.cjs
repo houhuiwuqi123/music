@@ -91,7 +91,9 @@ function verifyGlobe() {
     assert.ok(!view.includes('个地点'), 'online/place counts are not shown');
     // No preview panel above the list; zoomed-in globe shows avatar + song bubbles.
     assert.ok(!view.includes('CandyPreviewBar'), 'preview progress panel removed');
-    assert.ok(globe.includes('let reveal = CGFloat(max(0, min(1, (zoom - 1.8) / 0.7)))') && globe.includes('view.projectPoint(world)'));
+    assert.ok(globe.includes('callout.setExpanded(detailed || id == selectedID)') && globe.includes('view.projectPoint(world)'));
+    // Avatars always pinned at the place; the list shows 10 with a random redraw.
+    assert.ok(view.includes('ForEach(shownListeners)') && view.includes('private static let pageSize = 10'));
     assert.ok(view.includes('marker.avatar = listener.avatar') && globe.includes('private final class CandyGlobeCallout: UIView'));
 }
 

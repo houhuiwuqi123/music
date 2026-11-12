@@ -205,19 +205,19 @@ struct CandyGlobeView: UIViewRepresentable {
             layoutCallouts()
         }
 
-        /// Pins each bubble above its dot. Hidden while zoomed out (only the lit dots show),
-        /// fading in from 1.8x, and hidden when the place turns to the far side.
+        /// Pins each online place's avatar above its lit dot. Zoomed out it is just the round
+        /// avatar; from 1.8x (or when selected) it expands to show the name and song.
+        /// Places on the far side of the globe fade out.
         private func layoutCallouts() {
             guard let view, !callouts.isEmpty else { return }
-            let reveal = CGFloat(max(0, min(1, (zoom - 1.8) / 0.7)))
+            let detailed = zoom >= 1.8
             for (id, callout) in callouts {
                 guard let node = markerNodes[id] else { callout.isHidden = true; continue }
                 let world = node.worldPosition
                 // The camera looks down -Z, so the near hemisphere has z > 0.
-                let facing = CGFloat(max(0, min(1, (world.z - 0.15) / 0.25)))
-                let selectedBoost: CGFloat = id == selectedID ? 1 : reveal
-                let alpha = facing * selectedBoost
+                let alpha = CGFloat(max(0, min(1, (world.z - 0.15) / 0.25)))
                 callout.isHidden = alpha <= 0.01
+                callout.setExpanded(detailed || id == selectedID)
                 guard !callout.isHidden else { continue }
                 let p = view.projectPoint(world)
                 let size = callout.bounds.size
@@ -476,6 +476,8 @@ private final class CandyGlobeCallout: UIView {
     private let nameLabel = UILabel()
     private let songLabel = UILabel()
     private var avatarKey: String?
+    private var expanded = true
+    private var fullWidth: CGFloat = 120
 
     init() {
         super.init(frame: CGRect(x: 0, y: 0, width: 120, height: 38))
@@ -485,12 +487,10 @@ private final class CandyGlobeCallout: UIView {
         layer.shadowOpacity = 0.18
         layer.shadowRadius = 6
         layer.shadowOffset = CGSize(width: 0, height: 2)
-        for imageView in [avatarView] {
-            imageView.frame = CGRect(x: 4, y: 4, width: 30, height: 30)
-            imageView.layer.cornerRadius = 15
-            imageView.clipsToBounds = true
-            imageView.contentMode = .scaleAspectFill
-        }
+        avatarView.frame = CGRect(x: 4, y: 4, width: 30, height: 30)
+        avatarView.layer.cornerRadius = 15
+        avatarView.clipsToBounds = true
+        avatarView.contentMode = .scaleAspectFill
         initialLabel.frame = avatarView.frame
         initialLabel.layer.cornerRadius = 15
         initialLabel.clipsToBounds = true
@@ -522,7 +522,17 @@ private final class CandyGlobeCallout: UIView {
         let textWidth = min(118, max(nameLabel.sizeThatFits(.zero).width, songLabel.sizeThatFits(.zero).width))
         nameLabel.frame = CGRect(x: 40, y: 5, width: textWidth, height: 15)
         songLabel.frame = CGRect(x: 40, y: 20, width: textWidth, height: 13)
-        bounds = CGRect(x: 0, y: 0, width: 40 + textWidth + 12, height: 38)
+        fullWidth = 40 + textWidth + 12
+        bounds = CGRect(x: 0, y: 0, width: expanded ? fullWidth : 38, height: 38)
+    }
+
+    /// Collapsed: a round avatar pin. Expanded: avatar + name + song.
+    func setExpanded(_ value: Bool) {
+        guard value != expanded else { return }
+        expanded = value
+        nameLabel.isHidden = !value
+        songLabel.isHidden = !value
+        bounds = CGRect(x: 0, y: 0, width: value ? fullWidth : 38, height: 38)
     }
 }
 
