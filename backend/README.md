@@ -35,10 +35,10 @@ sudo ./deploy.sh install     # 编译节点和网页，安装二进制、web/dis
 sudo ./deploy.sh start|stop|restart
 ./deploy.sh status           # 服务状态和监听端口
 ./deploy.sh logs             # 跟踪日志
-./deploy.sh check            # 自检 /api/bootstrap、/api/ice、GeoIP 文件、p2p 域名解析
+./deploy.sh check            # 自检 /api/bootstrap、/api/ice、GeoIP 文件
 ```
 
-域名说明：`music.webtrc.eu.cc` 走 Cloudflare 代理，承载网页、API、iOS 网关和浏览器的 libp2p wss（nginx 模板 `deploy/nginx.conf`）；`p2p.webtrc.eu.cc` 是仅 DNS 记录，只用于节点之间的 4001 端口，见 [deploy/p2p-domain.md](deploy/p2p-domain.md)。
+域名说明：`music.webtrc.eu.cc` 走 Cloudflare 代理，承载网页、API、iOS 网关和浏览器的 libp2p wss（nginx 模板 `deploy/nginx.conf`）；默认是单节点，只有这一个域名，不对外开放其他端口。以后增加节点时才需要 `p2p.webtrc.eu.cc`（仅 DNS 记录，tcp/udp 4001），见 [deploy/p2p-domain.md](deploy/p2p-domain.md)。
 
 ## 构建与运行（本地）
 
@@ -47,15 +47,15 @@ Set-Location 'C:\phpwork\music\backend'
 go test ./... -count=1
 go build -o server.exe .
 .\server.exe -http 127.0.0.1:8080 -key .\state\node.key `
-  -listen '/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1,/ip4/127.0.0.1/tcp/4002/ws' `
-  -announce '/dns4/music.webtrc.eu.cc/tcp/8443/wss,/dns4/p2p.webtrc.eu.cc/tcp/4001,/dns4/p2p.webtrc.eu.cc/udp/4001/quic-v1' `
+  -listen '/ip4/127.0.0.1/tcp/4002/ws' `
+  -announce '/dns4/music.webtrc.eu.cc/tcp/8443/wss' `
   -gateway-url 'wss://music.webtrc.eu.cc/ws' -web-dir ..\web\dist -geoip-db .\GeoLite2-City2.mmdb
 ```
 
 | 参数 / 环境变量 | 说明 |
 |---|---|
 | `-key` | 节点身份。首次启动时生成，之后保持不变，peer ID 由它决定。请备份并限制权限。 |
-| `-listen` | libp2p 监听地址。`…/4002/ws` 只绑定本机，由 nginx 的 8443 端口终止 TLS 后转发。 |
+| `-listen` | libp2p 监听地址。`…/4002/ws` 只绑定本机，由 nginx 的 8443 端口终止 TLS 后转发。多节点时再加 `/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1`（不传该参数时的默认值包含它们）。 |
 | `-announce` / `NODE_ANNOUNCE` | 对外公布的地址。浏览器只能使用 wss，节点之间互联使用源站公网 IP 的 tcp/quic（Cloudflare 不代理原始 TCP/UDP）。 |
 | `-bootstrap` / `NODE_BOOTSTRAP` | 其他节点的 `/…/p2p/<peerId>` 地址，多个用逗号分隔。只有一台节点时留空。 |
 | `-gateway-url` / `NODE_GATEWAY_URL` | 本节点 iOS 网关的公开 wss 地址，会出现在 `/api/bootstrap` 结果里。 |
@@ -63,11 +63,11 @@ go build -o server.exe .
 | `STUN_URLS`、`TURN_URLS`、`TURN_REST_SECRET` | ICE 配置。TURN 采用 coturn REST 凭据，有效期 1 小时，见 `deploy/compose.yaml`。 |
 | `-geoip-db`、`-trusted-proxies` | 本地 MMDB 地区查询（不调用外部服务）。回环地址默认视为可信代理。 |
 
-需要放行的端口：4001/tcp、4001/udp（节点互联），8443/tcp（浏览器 libp2p）。nginx 模板见 `deploy/nginx.conf`，systemd 模板见 `webtrc.service`。
+需要放行的端口：单节点只需 443/tcp 和 8443/tcp（建议只放行 Cloudflare IP 段）；多节点时再放行 4001/tcp、4001/udp。nginx 模板见 `deploy/nginx.conf`，systemd 模板见 `webtrc.service`。
 
 ### 增加一台节点
 
-在另一台服务器上用同样的方式启动，并设置 `NODE_BOOTSTRAP=/dns4/p2p.webtrc.eu.cc/tcp/4001/p2p/<第一台peerId>`（peer ID 可从启动日志或 `/api/bootstrap` 获取，详见 [deploy/p2p-domain.md](deploy/p2p-domain.md)）。两台节点会互相进入对方的路由表，GossipSub 会跨节点同步广场，任意节点上的 `GET_PROVIDERS` 都能查到另一台节点上的终端。客户端从 `/api/bootstrap` 自动获知新节点。
+先按 [deploy/p2p-domain.md](deploy/p2p-domain.md) 让第一台监听并公布 4001，再在另一台服务器上用同样的方式启动，并设置 `NODE_BOOTSTRAP=/dns4/p2p.webtrc.eu.cc/tcp/4001/p2p/<第一台peerId>`（peer ID 可从启动日志或 `/api/bootstrap` 获取，详见 [deploy/p2p-domain.md](deploy/p2p-domain.md)）。两台节点会互相进入对方的路由表，GossipSub 会跨节点同步广场，任意节点上的 `GET_PROVIDERS` 都能查到另一台节点上的终端。客户端从 `/api/bootstrap` 自动获知新节点。
 
 ## HTTP 接口
 

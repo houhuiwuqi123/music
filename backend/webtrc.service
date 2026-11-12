@@ -7,18 +7,21 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/www/wwwroot/webtrc/backend
 
-# NODE_ANNOUNCE：对外公布的地址（不写 IP）
-#   /dns4/music.webtrc.eu.cc/tcp/8443/wss  浏览器经 Cloudflare → nginx:8443 → 127.0.0.1:4002
-#   /dns4/p2p.webtrc.eu.cc/tcp|udp/4001    节点之间直连（仅 DNS 记录，见 deploy/p2p-domain.md）
-# NODE_BOOTSTRAP：其他节点 /dns4/<域名>/tcp/4001/p2p/<peerId>，逗号分隔；单节点留空。
-Environment=NODE_ANNOUNCE=/dns4/music.webtrc.eu.cc/tcp/8443/wss,/dns4/p2p.webtrc.eu.cc/tcp/4001,/dns4/p2p.webtrc.eu.cc/udp/4001/quic-v1
+# 默认：单节点。只监听本机 127.0.0.1:4002/ws（浏览器经 Cloudflare → nginx:8443 转发进来），
+# 不对外监听任何端口，源站 IP 不出现在任何公布地址或 DNS 记录里。iOS 走 nginx:443 /ws → 127.0.0.1:8080。
+#
+# 以后增加第二台节点时（见 deploy/p2p-domain.md）：
+#   1. -listen 末尾加上 ,/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1，放行 4001 tcp/udp
+#   2. NODE_ANNOUNCE 加上 ,/dns4/p2p.webtrc.eu.cc/tcp/4001,/dns4/p2p.webtrc.eu.cc/udp/4001/quic-v1（灰云 DNS 记录）
+#   3. 其他节点的 NODE_BOOTSTRAP 填 /dns4/p2p.webtrc.eu.cc/tcp/4001/p2p/<本节点 peerId>
+Environment=NODE_ANNOUNCE=/dns4/music.webtrc.eu.cc/tcp/8443/wss
 Environment=NODE_BOOTSTRAP=
 Environment=NODE_GATEWAY_URL=wss://music.webtrc.eu.cc/ws
 # 可选 TURN（coturn use-auth-secret），见 deploy/compose.yaml。密钥不要写进仓库，
 # 放到 /etc/webtrc.env（chmod 600）：TURN_URLS=… 和 TURN_REST_SECRET=…
 EnvironmentFile=-/etc/webtrc.env
 
-ExecStart=/www/wwwroot/webtrc/backend/server -http 127.0.0.1:8080 -key /www/wwwroot/webtrc/backend/state/node.key -listen /ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1,/ip4/127.0.0.1/tcp/4002/ws -geoip-db /www/wwwroot/webtrc/backend/GeoLite2-City2.mmdb
+ExecStart=/www/wwwroot/webtrc/backend/server -http 127.0.0.1:8080 -key /www/wwwroot/webtrc/backend/state/node.key -listen /ip4/127.0.0.1/tcp/4002/ws -geoip-db /www/wwwroot/webtrc/backend/GeoLite2-City2.mmdb
 
 Restart=always
 RestartSec=5s

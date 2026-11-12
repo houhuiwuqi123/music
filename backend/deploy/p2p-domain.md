@@ -1,4 +1,8 @@
-# p2p.webtrc.eu.cc 域名配置
+# p2p.webtrc.eu.cc 域名配置（增加节点时才需要）
+
+> **默认是单节点，不需要本文档的任何配置。** `webtrc.service` 只监听 127.0.0.1，只公布 `music.webtrc.eu.cc` 的 wss 地址，不开放 4001，也不需要创建 `p2p` DNS 记录。iOS 和浏览器都挂在这一台节点上，发布、发现和信令都在节点内部完成。
+>
+> 只有部署第二台节点时，才按下面的步骤启用节点之间的互联。
 
 `p2p.webtrc.eu.cc` 只用于**节点之间的直连**：libp2p 的 TCP / QUIC 4001 端口。网页、API、iOS 网关和浏览器的 libp2p 都走 `music.webtrc.eu.cc`（经 Cloudflare 代理），和这个域名无关。
 
@@ -58,13 +62,14 @@ dig +short p2p.webtrc.eu.cc
 
 ## 3. 节点配置
 
-`backend/webtrc.service` 中已经配好：
+修改 `backend/webtrc.service`，让节点对外监听并公布 4001：
 
 ```ini
 Environment=NODE_ANNOUNCE=/dns4/music.webtrc.eu.cc/tcp/8443/wss,/dns4/p2p.webtrc.eu.cc/tcp/4001,/dns4/p2p.webtrc.eu.cc/udp/4001/quic-v1
+ExecStart=... -listen /ip4/127.0.0.1/tcp/4002/ws,/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1 ...
 ```
 
-改完后执行 `./deploy.sh install && ./deploy.sh restart`。
+改完后执行 `sudo ./deploy.sh install`（服务在运行时会自动重启）。
 
 ## 4. 验证
 

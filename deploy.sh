@@ -84,7 +84,7 @@ cmd_install() {
   else
     info "安装完成。启动：./deploy.sh start"
   fi
-  echo "nginx 配置模板：$REPO_DIR/backend/deploy/nginx.conf；p2p 域名：$REPO_DIR/backend/deploy/p2p-domain.md"
+  echo "nginx 配置模板：$REPO_DIR/backend/deploy/nginx.conf；增加节点：$REPO_DIR/backend/deploy/p2p-domain.md"
 }
 
 check_geoip() {
@@ -107,7 +107,7 @@ cmd_service() {
 cmd_status() {
   systemctl --no-pager --lines=20 status "$SERVICE" || true
   echo
-  info "监听端口（8080 API / 4001 节点互联 / 4002 浏览器 libp2p）"
+  info "监听端口（8080 API / 4002 浏览器 libp2p / 4001 节点互联，仅多节点时）"
   if command -v ss >/dev/null 2>&1; then
     ss -lntup 2>/dev/null | grep -E ':(8080|4001|4002)\b' || warn "未发现监听端口"
   fi
@@ -124,15 +124,18 @@ cmd_check() {
   if body="$(curl -fsS --max-time 5 "http://$HTTP_ADDR/api/bootstrap")"; then
     info "/api/bootstrap："
     echo "$body"
-    echo "$body" | grep -q 'p2p.webtrc.eu.cc' || warn "公布地址中没有 p2p.webtrc.eu.cc，请检查 NODE_ANNOUNCE"
+    echo "$body" | grep -q '/tcp/8443/wss' || warn "公布地址中没有浏览器用的 wss 地址，请检查 NODE_ANNOUNCE"
+    if echo "$body" | grep -q '/tcp/4001'; then
+      info "多节点模式：公布了 4001，确认安全组/宝塔防火墙已放行 4001 tcp/udp"
+      command -v dig >/dev/null 2>&1 && info "p2p.webtrc.eu.cc 解析：$(dig +short p2p.webtrc.eu.cc | tr '\n' ' ')"
+    else
+      info "单节点模式：未公布 4001，无需开放端口"
+    fi
   else
     warn "无法访问 http://$HTTP_ADDR/api/bootstrap"; ok=1
   fi
   curl -fsS --max-time 5 "http://$HTTP_ADDR/api/ice" >/dev/null && info "/api/ice 正常" || { warn "/api/ice 异常"; ok=1; }
   check_geoip
-  if command -v dig >/dev/null 2>&1; then
-    info "p2p.webtrc.eu.cc 解析：$(dig +short p2p.webtrc.eu.cc | tr '\n' ' ')"
-  fi
   return $ok
 }
 
