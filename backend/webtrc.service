@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=/www/wwwroot/webtrc/backend
 
 # 默认：单节点。只监听本机 127.0.0.1:4002/ws（浏览器经 Cloudflare → nginx:8443 转发进来），
-# 不对外监听任何端口，源站 IP 不出现在任何公布地址或 DNS 记录里。iOS 走 nginx:443 /ws → 127.0.0.1:8080。
+# 不对外监听任何端口，源站 IP 不出现在任何公布地址或 DNS 记录里。iOS 走 nginx:443 /ws → 127.0.0.1:8003。
 #
 # 以后增加第二台节点时（见 deploy/p2p-domain.md）：
 #   1. -listen 末尾加上 ,/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1，放行 4001 tcp/udp
@@ -21,7 +21,7 @@ Environment=NODE_GATEWAY_URL=wss://music.webtrc.eu.cc/ws
 # 放到 /etc/webtrc.env（chmod 600）：TURN_URLS=… 和 TURN_REST_SECRET=…
 EnvironmentFile=-/etc/webtrc.env
 
-ExecStart=/www/wwwroot/webtrc/backend/server -http 127.0.0.1:8080 -key /www/wwwroot/webtrc/backend/state/node.key -listen /ip4/127.0.0.1/tcp/4002/ws -geoip-db /www/wwwroot/webtrc/backend/GeoLite2-City2.mmdb
+ExecStart=/www/wwwroot/webtrc/backend/server -http 127.0.0.1:8003 -key /www/wwwroot/webtrc/backend/state/node.key -listen /ip4/127.0.0.1/tcp/4002/ws -geoip-db /www/wwwroot/webtrc/backend/GeoLite2-City2.mmdb
 
 Restart=always
 RestartSec=5s

@@ -46,7 +46,7 @@ sudo ./deploy.sh start|stop|restart
 Set-Location 'C:\phpwork\music\backend'
 go test ./... -count=1
 go build -o server.exe .
-.\server.exe -http 127.0.0.1:8080 -key .\state\node.key `
+.\server.exe -http 127.0.0.1:8003 -key .\state\node.key `
   -listen '/ip4/127.0.0.1/tcp/4002/ws' `
   -announce '/dns4/music.webtrc.eu.cc/tcp/8443/wss' `
   -gateway-url 'wss://music.webtrc.eu.cc/ws' -web-dir ..\web\dist -geoip-db .\GeoLite2-City2.mmdb

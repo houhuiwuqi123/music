@@ -28,7 +28,7 @@ import (
 )
 
 func main() {
-	httpAddr := flag.String("http", "127.0.0.1:8080", "HTTP listen address (API + iOS gateway WebSocket); put TLS in front")
+	httpAddr := flag.String("http", "127.0.0.1:8003", "HTTP listen address (API + iOS gateway WebSocket); put TLS in front")
 	keyPath := flag.String("key", "./state/node.key", "persisted node identity")
 	listen := flag.String("listen", "/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1,/ip4/127.0.0.1/tcp/4002/ws",
 		"comma-separated libp2p listen multiaddrs")

@@ -9,7 +9,7 @@ The browser is a full js-libp2p peer on the AURU DHT. It does not use any centra
 
 ```bash
 npm install
-npm run dev                         # proxies /api to NODE_HTTP (default http://127.0.0.1:8080)
+npm run dev                         # proxies /api to NODE_HTTP (default http://127.0.0.1:8003)
 npm run build                       # → dist/, served by nginx or `server -web-dir ../web/dist`
 node --test test/transfer.test.ts   # protocol tests
 node --test test/interop.test.ts    # builds and starts the Go node; needs Go

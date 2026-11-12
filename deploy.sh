@@ -17,7 +17,7 @@ SERVICE="${SERVICE:-webtrc}"
 UNIT_SRC="$REPO_DIR/backend/webtrc.service"
 UNIT_DST="/etc/systemd/system/${SERVICE}.service"
 BIN="$APP_DIR/backend/server"
-HTTP_ADDR="127.0.0.1:8080"
+HTTP_ADDR="127.0.0.1:8003"
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m警告:\033[0m %s\n' "$*" >&2; }
@@ -108,9 +108,9 @@ cmd_service() {
 cmd_status() {
   systemctl --no-pager --lines=20 status "$SERVICE" || true
   echo
-  info "监听端口（8080 API / 4002 浏览器 libp2p / 4001 节点互联，仅多节点时）"
+  info "监听端口（8003 API / 4002 浏览器 libp2p / 4001 节点互联，仅多节点时）"
   if command -v ss >/dev/null 2>&1; then
-    ss -lntup 2>/dev/null | grep -E ':(8080|4001|4002)\b' || warn "未发现监听端口"
+    ss -lntup 2>/dev/null | grep -E ':(8003|4001|4002)\b' || warn "未发现监听端口"
   fi
 }
 

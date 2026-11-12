@@ -8,7 +8,7 @@
 
 | 域名 | Cloudflare 代理 | 端口 | 用途 | 由谁处理 |
 |---|---|---|---|---|
-| `music.webtrc.eu.cc` | 开启（橙云） | 443 | 网页、`/api/`、iOS 网关 `/ws` | nginx → 127.0.0.1:8080 |
+| `music.webtrc.eu.cc` | 开启（橙云） | 443 | 网页、`/api/`、iOS 网关 `/ws` | nginx → 127.0.0.1:8003 |
 | `music.webtrc.eu.cc` | 开启（橙云） | 8443 | 浏览器的 libp2p wss | nginx → 127.0.0.1:4002 |
 | `p2p.webtrc.eu.cc` | **关闭（灰云，仅 DNS）** | 4001/tcp、4001/udp | 节点之间的 Kademlia / GossipSub / 信令转发 | Go 进程直接监听 |
 
@@ -58,7 +58,7 @@ dig +short p2p.webtrc.eu.cc
 | 8443 | TCP | Cloudflare IP 段 | 浏览器的 libp2p wss（经 Cloudflare） |
 | 443 | TCP | Cloudflare IP 段 | 网站 |
 
-8080 和 4002 只监听在 127.0.0.1，**不要**对外开放。
+8003 和 4002 只监听在 127.0.0.1，**不要**对外开放。
 
 ## 3. 节点配置
 
