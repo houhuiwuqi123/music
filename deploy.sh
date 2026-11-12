@@ -27,8 +27,8 @@ root() { [ "$(id -u)" -eq 0 ] || die "此操作需要 root（sudo ./deploy.sh $*
 
 build_backend() {
   need go "请安装 Go（go.mod 要求 1.27.2+；GOTOOLCHAIN=auto 时会自动下载对应版本）"
-  info "编译节点 → backend/server.new"
-  (cd "$REPO_DIR/backend" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o server.new .)
+  info "编译节点 → backend/server.build"
+  (cd "$REPO_DIR/backend" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o server.build .)
 }
 
 build_web() {
@@ -58,9 +58,10 @@ cmd_install() {
   info "安装到 $APP_DIR"
   install -d -m 755 "$APP_DIR/backend" "$APP_DIR/web"
   install -d -m 700 "$APP_DIR/backend/state"
+  # 编译产物 server.build 与临时文件 server.new 名字不同（仓库可能就克隆在 APP_DIR 里）；
   # 先写临时文件再 mv：替换正在运行的二进制也是原子的
-  install -m 755 "$REPO_DIR/backend/server.new" "$BIN.new"
-  rm -f "$REPO_DIR/backend/server.new"
+  install -m 755 "$REPO_DIR/backend/server.build" "$BIN.new"
+  rm -f "$REPO_DIR/backend/server.build"
   mv -f "$BIN.new" "$BIN"
   if [ -d "$REPO_DIR/web/dist" ] && [ "$REPO_DIR" != "$APP_DIR" ]; then
     rm -rf "$APP_DIR/web/dist.new"
