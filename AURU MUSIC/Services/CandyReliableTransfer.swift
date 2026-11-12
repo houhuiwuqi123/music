@@ -93,12 +93,17 @@ actor CandyTransferDisk {
     init(file: CandyPlazaFile, folder: URL) {
         self.file = file
         self.folder = folder
-        // Content-addressed: any provider of the same SHA-256 continues the same partial.
+        part = Self.partialURL(file: file, folder: folder)
+        record = part.deletingPathExtension().appendingPathExtension("json")
+    }
+
+    /// Content-addressed: any provider of the same SHA-256 continues the same partial.
+    /// The preview player reads verified bytes from this file while it is being written.
+    nonisolated static func partialURL(file: CandyPlazaFile, folder: URL) -> URL {
         let namespace = SHA256.hash(data: Data("auru-dht".utf8)).map { String(format: "%02x", $0) }.joined()
         let key = "\(namespace)-\(file.sha256 ?? file.id)"
-        let staging = folder.appendingPathComponent(".partial", isDirectory: true)
-        part = staging.appendingPathComponent(key).appendingPathExtension("part")
-        record = staging.appendingPathComponent(key).appendingPathExtension("json")
+        return folder.appendingPathComponent(".partial", isDirectory: true)
+            .appendingPathComponent(key).appendingPathExtension("part")
     }
 
     /// Whole-file SHA-256 plus per-block hashes, in one streaming pass.
@@ -364,6 +369,9 @@ final class CandyReliableTransfer {
     var iceServers: () -> [CandyICEServer] = { [] }
     var isOnline: () -> Bool = { false }
     var changed: ((CandyPlazaFile, Double, String) -> Void)?
+    /// Bytes from the start of the partial file that passed per-block SHA-256 checks
+    /// (block-aligned, or the full size). Drives listen-while-downloading.
+    var verified: ((CandyPlazaFile, Int64) -> Void)?
     var completed: ((CandyPlazaFile, URL) -> Void)?
     var failed: ((CandyPlazaFile?, String) -> Void)?
     var publicationUnavailable: ((String) -> Void)?
@@ -374,6 +382,7 @@ final class CandyReliableTransfer {
         var task: Task<Void, Never>?
         var peer: CandyRTCPeer?
         var lastUIUpdate = Date.distantPast
+        var verifiedBytes: Int64 = 0
         init(file: CandyPlazaFile, folder: URL) {
             self.file = file
             disk = CandyTransferDisk(file: file, folder: folder)
@@ -467,9 +476,11 @@ final class CandyReliableTransfer {
     }
 
     private func makePeer(session: String, remote: String) -> CandyRTCPeer {
-        let peer = CandyRTCPeer(session: session, remote: remote)
+        let servers = iceServers()
+        let peer = CandyRTCPeer(session: session, remote: remote,
+            expectsRelay: servers.contains { $0.urls.contains { $0.hasPrefix("turn") } })
         let configuration = RTCConfiguration()
-        configuration.iceServers = iceServers().map { server in
+        configuration.iceServers = servers.map { server in
             if let username = server.username, let credential = server.credential {
                 return RTCIceServer(urlStrings: server.urls, username: username, credential: credential)
             }
@@ -584,6 +595,19 @@ final class CandyReliableTransfer {
         job.task = Task { @MainActor [weak self] in await self?.run(job) }
     }
 
+    func isDownloading(_ fileID: String) -> Bool { jobs[fileID] != nil }
+
+    /// Verified prefix of a running download, or nil when it is not running.
+    func verifiedBytes(_ fileID: String) -> Int64? { jobs[fileID]?.verifiedBytes }
+
+    func partialURL(for file: CandyPlazaFile) -> URL { CandyTransferDisk.partialURL(file: file, folder: folder) }
+
+    private func reportVerified(_ job: Job, _ bytes: Int64) {
+        guard jobs[job.file.id] === job else { return }
+        job.verifiedBytes = bytes
+        verified?(job.file, bytes)
+    }
+
     func cancel(_ fileID: String) {
         guard let job = jobs.removeValue(forKey: fileID) else { return }
         job.task?.cancel()
@@ -620,6 +644,7 @@ final class CandyReliableTransfer {
                 complete(job, url)
                 return
             }
+            reportVerified(job, offset - offset % Int64(candyBlockSize))
             while Date() < deadline {
                 try Task.checkCancellation()
                 guard isOnline() else {
@@ -628,7 +653,10 @@ final class CandyReliableTransfer {
                     continue
                 }
                 report(job, offset, "DHT 查询提供者（GET_PROVIDERS）…")
-                let candidates = (try? await findProviders?(job.file.id)) ?? []
+                // The listener the user tapped is online and playing this song: try them first.
+                let owner = job.file.ownerId
+                let candidates = ((try? await findProviders?(job.file.id)) ?? [])
+                    .sorted { $0.peerId == owner && $1.peerId != owner }
                 try Task.checkCancellation()
                 if candidates.isEmpty { report(job, offset, "暂无在线提供者，稍后重试…") }
                 for candidate in candidates {
@@ -754,6 +782,7 @@ final class CandyReliableTransfer {
                         blockIndex += 1
                         inBlock = 0
                         blockHasher = SHA256()
+                        reportVerified(job, min(size, Int64(blockIndex) * Int64(candyBlockSize)))
                     }
                 }
                 report(job, position, "点对点传输中", force: false)
@@ -763,6 +792,7 @@ final class CandyReliableTransfer {
         let url: URL
         do { url = try await job.disk.finish() }
         catch {
+            reportVerified(job, 0)
             try? await job.disk.clear()
             _ = try? await job.disk.prepare()
             try? peer.sendControl(CandyWireMessage(t: "error", error: "hash-mismatch"))
@@ -973,10 +1003,14 @@ final class CandyRTCPeer: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     @MainActor var onChannel: (@MainActor (RTCDataChannel) -> Void)?
     @MainActor private var iceState: RTCIceConnectionState = .new
     @MainActor private var closed = false
+    @MainActor private var earlyGathering = false
+    /// With TURN configured, wait for a relay candidate; otherwise a server-reflexive one is enough.
+    private let expectsRelay: Bool
 
-    init(session: String, remote: String) {
+    init(session: String, remote: String, expectsRelay: Bool = false) {
         self.session = session
         self.remote = remote
+        self.expectsRelay = expectsRelay
     }
 
     @MainActor func attach(_ channel: RTCDataChannel) -> Bool {
@@ -1044,7 +1078,19 @@ final class CandyRTCPeer: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         else { inbox.push(.text(String(decoding: buffer.data, as: UTF8.self))) }
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
+    /// Non-trickle SDP waits for gathering, which can idle for seconds on dead interfaces.
+    /// Once a candidate that works across NATs exists, give siblings a moment and send.
+    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
+        let sdp = candidate.sdp
+        let usable = sdp.contains(" typ relay") || (!expectsRelay && sdp.contains(" typ srflx"))
+        guard usable else { return }
+        Task { @MainActor in
+            guard !earlyGathering else { return }
+            earlyGathering = true
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            gathering.succeed()
+        }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}

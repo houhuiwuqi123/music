@@ -27,6 +27,7 @@ type GatewayMessage struct {
 	Signature  string          `json:"signature,omitempty"`
 	PeerID     string          `json:"peerId,omitempty"`
 	Region     string          `json:"region,omitempty"`
+	Geo        []float64       `json:"geo,omitempty"`
 	Node       *NodeInfo       `json:"node,omitempty"`
 	Routing    []NodeInfo      `json:"routing,omitempty"`
 	ICEServers []ICEServer     `json:"iceServers,omitempty"`
@@ -55,6 +56,7 @@ type ICEServer struct {
 // GatewayOptions are per-connection values supplied by the HTTP layer.
 type GatewayOptions struct {
 	Region     string
+	Geo        []float64
 	GatewayURL string
 	ICE        func(id string) []ICEServer
 }
@@ -163,7 +165,7 @@ func (n *Node) ServeGateway(conn *websocket.Conn, opts GatewayOptions) {
 	for _, info := range n.RoutingPeers() {
 		routing = append(routing, NodeInfo{PeerID: info.ID.String(), Addrs: p2pAddrs(info)})
 	}
-	s.send(GatewayMessage{Type: "welcome", PeerID: s.peerID, Region: opts.Region, Node: &self, Routing: routing,
+	s.send(GatewayMessage{Type: "welcome", PeerID: s.peerID, Region: opts.Region, Geo: opts.Geo, Node: &self, Routing: routing,
 		ICEServers: opts.ICE(s.peerID), Entries: n.Plaza.Entries()})
 	go func() {
 		for {

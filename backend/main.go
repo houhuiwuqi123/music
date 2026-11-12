@@ -59,12 +59,12 @@ func main() {
 	defer n.Close()
 
 	ice := iceProvider(split(os.Getenv("STUN_URLS")), split(os.Getenv("TURN_URLS")), os.Getenv("TURN_REST_SECRET"))
-	region := func(r *http.Request) string {
-		value, err := regions.Region(geoip.ClientIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), proxies))
+	region := func(r *http.Request) (string, []float64) {
+		value, geo, err := regions.Locate(geoip.ClientIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), proxies))
 		if err != nil || value == "" {
-			return "地区未知"
+			return "地区未知", nil
 		}
-		return value
+		return value, geo
 	}
 	server := &http.Server{Addr: *httpAddr, Handler: routes(n, ice, region, *gatewayURL, *webDir),
 		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
@@ -82,7 +82,7 @@ func main() {
 	_ = server.Shutdown(ctx)
 }
 
-func routes(n *node.Node, ice func(string) []node.ICEServer, region func(*http.Request) string, gatewayURL, webDir string) http.Handler {
+func routes(n *node.Node, ice func(string) []node.ICEServer, region func(*http.Request) (string, []float64), gatewayURL, webDir string) http.Handler {
 	mux := http.NewServeMux()
 	upgrader := websocket.Upgrader{ReadBufferSize: 16 << 10, WriteBufferSize: 16 << 10,
 		CheckOrigin: func(*http.Request) bool { return true }} // authenticated by Ed25519 challenge, not cookies
@@ -91,7 +91,8 @@ func routes(n *node.Node, ice func(string) []node.ICEServer, region func(*http.R
 		if err != nil {
 			return
 		}
-		n.ServeGateway(conn, node.GatewayOptions{Region: region(r), GatewayURL: gatewayURL, ICE: ice})
+		name, geo := region(r)
+		n.ServeGateway(conn, node.GatewayOptions{Region: name, Geo: geo, GatewayURL: gatewayURL, ICE: ice})
 	})
 	mux.HandleFunc("GET /api/bootstrap", func(w http.ResponseWriter, r *http.Request) {
 		// The initial node list: this node plus the other DHT servers in its routing table.
@@ -110,7 +111,8 @@ func routes(n *node.Node, ice func(string) []node.ICEServer, region func(*http.R
 		writeJSON(w, map[string]any{"nodes": nodes, "dht": node.DHTProtocol, "topic": node.PlazaTopic})
 	})
 	mux.HandleFunc("GET /api/whoami", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"region": region(r)})
+		name, geo := region(r)
+		writeJSON(w, map[string]any{"region": name, "geo": geo})
 	})
 	mux.HandleFunc("GET /api/ice", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"iceServers": ice("web")})

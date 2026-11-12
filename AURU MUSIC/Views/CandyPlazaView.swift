@@ -4,8 +4,11 @@ import PhotosUI
 struct CandyPlazaView: View {
     @EnvironmentObject private var plaza: CandyPlazaService
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var player: MusicPlayerViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
     @State private var selectedFile: CandyPlazaFile?
+    @State private var selectedPlace: String?
     @State private var showsProfile = false
 
     private var visibleListeners: [CandyPlazaListening] {
@@ -14,7 +17,29 @@ struct CandyPlazaView: View {
             search.isEmpty || listener.title.localizedCaseInsensitiveContains(search)
                 || listener.artist.localizedCaseInsensitiveContains(search)
                 || listener.ownerName.localizedCaseInsensitiveContains(search)
+                || (listener.region ?? "").localizedCaseInsensitiveContains(search)
         }
+        .sorted { lhs, rhs in
+            if lhs.isOffline != rhs.isOffline { return !lhs.isOffline }
+            return lhs.ownerName < rhs.ownerName
+        }
+    }
+
+    private var markers: [CandyGlobeMarker] {
+        var places: [String: CandyGlobeMarker] = [:]
+        for listener in visibleListeners {
+            guard let key = Self.placeKey(listener), let lat = listener.latitude, let lon = listener.longitude else { continue }
+            var marker = places[key] ?? CandyGlobeMarker(id: key, latitude: lat, longitude: lon, online: false, count: 0)
+            marker.count += 1
+            marker.online = marker.online || !listener.isOffline
+            places[key] = marker
+        }
+        return places.values.sorted { $0.id < $1.id }
+    }
+
+    private var listedListeners: [CandyPlazaListening] {
+        guard let selectedPlace else { return visibleListeners }
+        return visibleListeners.filter { Self.placeKey($0) == selectedPlace }
     }
 
     var body: some View {
@@ -22,8 +47,9 @@ struct CandyPlazaView: View {
             VStack(spacing: 16) {
                 header
                 searchBar
-                starField
-                    .frame(height: 455)
+                globeCard
+                CandyPreviewBar(preview: plaza.preview)
+                listenerList
                 transferTasks
                 receiveHistory
             }
@@ -33,6 +59,13 @@ struct CandyPlazaView: View {
         }
         .scrollIndicators(.hidden)
         .task { plaza.start() }
+        .onChange(of: player.isPlaying) { playing in
+            // The library player and the preview never talk over each other.
+            if playing { plaza.preview.pause() }
+        }
+        .onChange(of: markers.map(\.id)) { ids in
+            if let selectedPlace, !ids.contains(selectedPlace) { self.selectedPlace = nil }
+        }
         .sheet(isPresented: $showsProfile) { CandyProfileView() }
         .confirmationDialog(
             "歌曲",
@@ -93,7 +126,7 @@ struct CandyPlazaView: View {
     private var searchBar: some View {
         HStack(spacing: 9) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("搜索歌曲、艺人或用户…", text: $query)
+            TextField("搜索歌曲、艺人、用户或地区…", text: $query)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             if !query.isEmpty {
@@ -108,37 +141,87 @@ struct CandyPlazaView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 15))
     }
 
-    private var starField: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Image(plaza.listeners.contains { !$0.isOffline } ? "PlazaOnline" : "PlazaEmpty")
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottomTrailing)
-                    .clipped()
-                    .allowsHitTesting(false)
+    // MARK: Globe
 
-                if !visibleListeners.isEmpty {
-                    ForEach(visibleListeners) { listener in
-                        let index = visibleListeners.firstIndex(where: { $0.id == listener.id }) ?? 0
-                        CandyFileStar(
-                            listener: listener,
-                            download: listener.file.flatMap { plaza.downloads[$0.id] },
-                            fieldSize: geometry.size,
-                            slotIndex: index,
-                            totalSlots: max(1, visibleListeners.count),
-                            action: { selectedFile = listener.file }
-                        )
-                        .id(listener.id)
-                    }
-                }
+    private var globeCard: some View {
+        let dark = colorScheme == .dark
+        let online = visibleListeners.filter { !$0.isOffline }.count
+        let places = markers
+        return ZStack {
+            // Soft rim glow behind the sphere, as in the reference artwork.
+            Circle()
+                .fill(dark ? Color.white.opacity(0.06) : Color(red: 1, green: 0.98, blue: 0.9))
+                .padding(18)
+                .shadow(color: dark ? Color.white.opacity(0.12) : Color(red: 1, green: 0.93, blue: 0.7).opacity(0.9), radius: 22)
+            CandyGlobeView(markers: places, selectedID: selectedPlace, dark: dark) { id in
+                withAnimation(.easeInOut(duration: 0.2)) { selectedPlace = id }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(.white.opacity(0.1), lineWidth: 1)
+            .padding(18)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text("\(online)").font(.system(.title3, design: .rounded).weight(.bold)).monospacedDigit()
+                Text("在线").font(.caption2).foregroundStyle(.secondary)
+                Text("\(places.filter(\.online).count) 个地点").font(.caption2).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .padding(14)
+            .allowsHitTesting(false)
+            if visibleListeners.isEmpty {
+                Text(plaza.connectionState == .connected ? "暂时没有人在线" : plaza.connectionState.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(14)
+                    .allowsHitTesting(false)
             }
         }
+        .aspectRatio(1, contentMode: .fit)
+        .background(dark ? Color(white: 0.08) : Color(red: 0.965, green: 0.965, blue: 0.955),
+                    in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        }
+    }
+
+    // MARK: Users
+
+    private var listenerList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                if selectedPlace != nil {
+                    Label(listedListeners.first?.region ?? "所选地点", systemImage: "mappin.and.ellipse").font(.headline)
+                    Spacer()
+                    Button("全部") { withAnimation { selectedPlace = nil } }
+                        .font(.caption.weight(.semibold))
+                } else {
+                    Text("在线用户").font(.headline)
+                    Spacer()
+                    Text("\(visibleListeners.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }
+            if listedListeners.isEmpty {
+                Text(query.isEmpty ? "还没有人在广场分享歌曲" : "没有匹配的用户")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            }
+            ForEach(listedListeners) { listener in
+                CandyListenerRow(
+                    listener: listener,
+                    transfer: listener.file.flatMap { plaza.downloads[$0.id] },
+                    isPreviewing: listener.file != nil && plaza.preview.file?.id == listener.file?.id,
+                    locate: Self.placeKey(listener).map { key -> () -> Void in { withAnimation { selectedPlace = key } } },
+                    listen: {
+                        guard let file = listener.file else { return }
+                        player.pause()
+                        plaza.listen(file)
+                    },
+                    download: { selectedFile = listener.file }
+                )
+            }
+        }
+        .padding(15)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
     }
 
     private var receiveHistory: some View {
@@ -221,8 +304,10 @@ struct CandyPlazaView: View {
         }
     }
 
-    fileprivate static func stableHash(_ value: String) -> UInt32 {
-        value.utf8.reduce(UInt32(2_166_136_261)) { ($0 ^ UInt32($1)) &* 16_777_619 }
+    /// Users whose coarse location rounds to the same 0.1° share one lit dot.
+    static func placeKey(_ listener: CandyPlazaListening) -> String? {
+        guard let lat = listener.latitude, let lon = listener.longitude else { return nil }
+        return String(format: "%.1f,%.1f", lat, lon)
     }
 
     fileprivate static func formatSize(_ size: Int64) -> String {
@@ -230,131 +315,170 @@ struct CandyPlazaView: View {
     }
 }
 
-private struct CandyFileStar: View {
+private struct CandyListenerRow: View {
     let listener: CandyPlazaListening
-    let download: CandyPlazaDownload?
-    let fieldSize: CGSize
-    let slotIndex: Int
-    let totalSlots: Int
-    let action: () -> Void
-    @State private var flightStartedAt = Date()
-    @State private var frozenDate: Date?
-    @State private var successGlow = false
+    let transfer: CandyPlazaDownload?
+    let isPreviewing: Bool
+    let locate: (() -> Void)?
+    let listen: () -> Void
+    let download: () -> Void
 
-    private var hash: UInt32 { CandyPlazaView.stableHash(listener.id) }
-    private var starSize: CGFloat {
-        let logarithm = log10(Double(max(listener.file?.size ?? 0, 1_024)))
-        let fraction = min(1, max(0, (logarithm - 3) / 6))
-        return CGFloat(16 + fraction * 18)
-    }
     private var isDownloading: Bool {
-        guard let download else { return false }
-        if case .downloading = download.state { return true }
+        if case .downloading = transfer?.state { return true }
         return false
     }
-    private var isComplete: Bool { download?.state.isComplete == true && successGlow }
+
+    private var isDownloaded: Bool { transfer?.state.isComplete == true }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.04, paused: listener.isOffline)) { timeline in
-            let date = listener.isOffline ? (frozenDate ?? timeline.date) : timeline.date
-            let time = max(0, date.timeIntervalSince(flightStartedAt) - Double(hash % 1000) / 1000 * 3) / 14
-            let cycle = Int(time.rounded(.down))
-            let progress = time - Double(cycle)
-            let seed = hash &+ UInt32(truncatingIfNeeded: cycle) &* 2_654_435_761
-            let startX = 0.86 + Double(seed % 100) / 100 * 0.10
-            let endX = 0.10 + Double((seed >> 8) % 100) / 100 * 0.12
-            let y = 0.88 - progress * 0.73
-            let scale = 1.15 - progress * 0.70
-            // 空间位置分散：通过用户唯一哈希与 slotIndex 在右下角随机分配非重叠区域（左右偏移 ±28pt，上下偏移 ±18pt）
-            let userOffsetX = totalSlots > 1 ? (Double((hash ^ (UInt32(slotIndex) &* 31)) % 100) / 100.0 - 0.5) * 56.0 : 0
-            let userOffsetY = totalSlots > 1 ? (Double(((hash >> 8) ^ (UInt32(slotIndex) &* 17)) % 100) / 100.0 - 0.5) * 36.0 : 0
-            let x = startX + (endX - startX) * progress
-            Button(action: action) {
-                VStack(spacing: 5) {
-                    ZStack {
-                        if !listener.isOffline {
-                            Capsule()
-                                .fill(LinearGradient(colors: [.clear, .purple.opacity(0.55)], startPoint: .leading, endPoint: .trailing))
-                                .frame(width: 65, height: 2)
-                                .rotationEffect(.degrees(40))
-                                .offset(x: 23, y: 23)
-                        }
-                        if let encoded = listener.avatar, let data = Data(base64Encoded: encoded),
-                           let image = UIImage(data: data) {
-                            Image(uiImage: image)
-                                .resizable().scaledToFill()
-                                .frame(width: 38, height: 38)
-                                .clipShape(Circle())
-                        } else {
-                            Image(systemName: "star.fill")
-                                .font(.system(size: starSize))
-                                .foregroundStyle(
-                                    LinearGradient(colors: [.pink, .purple, Color(red: 1, green: 0.82, blue: 0.42)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                                )
-                                .shadow(color: (isComplete ? Color.green : Color.pink).opacity(0.75), radius: isComplete ? 18 : 9)
-                        }
-                        if isDownloading {
-                            Text("\(Int((download?.progress ?? 0) * 100))%")
-                                .font(.system(size: 10, weight: .heavy, design: .rounded))
-                                .foregroundStyle(.white)
-                                .padding(2)
-                                .background(.black.opacity(0.55), in: Circle())
-                        }
+        HStack(spacing: 11) {
+            avatar
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    Text(listener.ownerName).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Button { locate?() } label: {
+                        Text(listener.region ?? "地区未知").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .frame(width: 54, height: 42)
-                    .shadow(color: isComplete ? .green : .clear, radius: 16)
-                    VStack(spacing: 2) {
-                        Text("\(listener.ownerName) · \(listener.region ?? "地区未知")")
-                            .font(.system(size: 13, weight: .heavy))
-                            .foregroundStyle(Color(red: 1, green: 0.82, blue: 0.42))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Text(listener.title)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.92))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(width: 144)
+                    .buttonStyle(.plain)
+                    .disabled(locate == nil)
                 }
+                Text(listener.artist.isEmpty ? listener.title : "\(listener.title) · \(listener.artist)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if isDownloading, let transfer {
+                    ProgressView(value: transfer.progress).tint(.purple).frame(maxWidth: 160)
+                }
+            }
+            Spacer(minLength: 4)
+            Button(action: listen) {
+                Label(isPreviewing ? "试听中" : "听听看", systemImage: isPreviewing ? "waveform" : "play.fill")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background((isPreviewing ? Color.pink : Color.purple).opacity(0.16), in: Capsule())
             }
             .buttonStyle(.plain)
-            .disabled(isDownloading || listener.file == nil || listener.isOffline)
-            .saturation(listener.isOffline ? 0 : 1)
-            .opacity(listener.isOffline ? 0.45 : max(0, min(1, sin(progress * .pi) * 3)))
-            .scaleEffect(scale)
-            .position(
-                x: min(max(fieldSize.width * 0.12, fieldSize.width * x + userOffsetX), fieldSize.width * 0.94),
-                y: min(max(fieldSize.height * 0.12, fieldSize.height * y + userOffsetY), fieldSize.height * 0.94)
-            )
-        }
-        .onAppear {
-            if download?.state.isComplete == true { showSuccessGlow() }
-            if listener.isOffline { frozenDate = Date() }
-        }
-        .onChange(of: download?.state.isComplete) { completed in
-            if completed == true { showSuccessGlow() }
-        }
-        .onChange(of: listener.file?.id) { _ in successGlow = false }
-        .onChange(of: listener.isOffline) { offline in
-            if offline {
-                frozenDate = Date()
-            } else {
-                if let frozenDate {
-                    flightStartedAt = flightStartedAt.addingTimeInterval(Date().timeIntervalSince(frozenDate))
-                }
-                frozenDate = nil
+            .disabled(listener.file == nil || (listener.isOffline && !isDownloaded) || isPreviewing)
+            Button(action: download) {
+                Image(systemName: isDownloaded ? "checkmark.circle.fill" : "arrow.down.circle")
+                    .font(.title3)
+                    .foregroundStyle(isDownloaded ? Color.green : Color.accentColor)
             }
+            .buttonStyle(.plain)
+            .disabled(listener.file == nil || listener.isOffline || isDownloading || isDownloaded)
+            .accessibilityLabel("下载")
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14))
+        .opacity(listener.isOffline ? 0.5 : 1)
+    }
+
+    @ViewBuilder private var avatar: some View {
+        if let encoded = listener.avatar, let data = Data(base64Encoded: encoded), let image = UIImage(data: data) {
+            Image(uiImage: image).resizable().scaledToFill()
+                .frame(width: 38, height: 38)
+                .clipShape(Circle())
+                .overlay(alignment: .bottomTrailing) { onlineDot }
+        } else {
+            Circle()
+                .fill(LinearGradient(colors: [.pink, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: 38, height: 38)
+                .overlay(Text(String(listener.ownerName.prefix(1))).font(.subheadline.weight(.bold)).foregroundStyle(.white))
+                .overlay(alignment: .bottomTrailing) { onlineDot }
         }
     }
 
-    private func showSuccessGlow() {
-        successGlow = true
-        Task {
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            successGlow = false
+    private var onlineDot: some View {
+        Circle()
+            .fill(listener.isOffline ? Color.gray : Color.green)
+            .frame(width: 10, height: 10)
+            .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 2))
+    }
+}
+
+private struct CandyPreviewBar: View {
+    @ObservedObject var preview: CandyPreviewPlayer
+
+    var body: some View {
+        if preview.isActive { content }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 11) {
+                Button { preview.toggle() } label: {
+                    Image(systemName: preview.phase == .playing || preview.phase == .buffering ? "pause.fill" : "play.fill")
+                        .font(.title3)
+                        .frame(width: 42, height: 42)
+                        .background(Color.purple.opacity(0.18), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isFailed)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(subtitle).font(.caption2).foregroundStyle(isFailed ? Color.red : Color.secondary).lineLimit(2)
+                }
+                Spacer(minLength: 4)
+                Button { preview.stop() } label: {
+                    Image(systemName: "xmark").font(.caption.weight(.bold)).padding(8)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("停止试听")
+            }
+            GeometryReader { geometry in
+                let width = geometry.size.width
+                let played = preview.duration > 0 ? min(1, preview.currentTime / preview.duration) : 0
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.08))
+                    Capsule().fill(Color.primary.opacity(0.18)).frame(width: width * preview.buffered)
+                    Capsule().fill(Color.purple).frame(width: width * played)
+                }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onEnded { value in
+                    preview.seek(to: max(0, min(1, value.location.x / max(1, width))))
+                })
+            }
+            .frame(height: 5)
+            HStack {
+                Text(Self.time(preview.currentTime))
+                Spacer()
+                Text(preview.duration > 0 ? Self.time(preview.duration) : "--:--")
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
         }
+        .padding(13)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var isFailed: Bool {
+        if case .failed = preview.phase { return true }
+        return false
+    }
+
+    private var title: String {
+        guard let file = preview.file else { return "" }
+        return URL(fileURLWithPath: file.name).deletingPathExtension().lastPathComponent
+    }
+
+    private var subtitle: String {
+        let owner = preview.file.map { "来自 \($0.ownerName)" } ?? ""
+        switch preview.phase {
+        case .failed(let message): return message
+        case .buffering:
+            let detail = preview.status.isEmpty ? "缓冲中" : preview.status
+            return "\(owner) · \(detail) · 已接收 \(Int(preview.buffered * 100))%"
+        case .playing, .paused:
+            return preview.buffered < 1 ? "\(owner) · 边下边播 \(Int(preview.buffered * 100))%" : "\(owner) · 已完整接收"
+        case .idle: return owner
+        }
+    }
+
+    private static func time(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "--:--" }
+        let total = Int(seconds)
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 

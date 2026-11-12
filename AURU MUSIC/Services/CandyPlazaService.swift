@@ -37,6 +37,9 @@ struct CandyPlazaListening: Codable, Identifiable, Equatable, Sendable {
     var artist: String
     var isPlaying: Bool
     var region: String? = nil
+    /// Coarse [latitude, longitude] from the announcing node's GeoIP (0.1°).
+    var latitude: Double? = nil
+    var longitude: Double? = nil
     var file: CandyPlazaFile? = nil
     var avatar: String? = nil
     var offlineAt: Int64? = nil
@@ -93,6 +96,7 @@ struct CandyPlazaBody: Encodable, Sendable {
     var name: String
     var avatar: String? = nil
     var region: String? = nil
+    var geo: [Double]? = nil
     var client: String? = nil
     var via: [String]
     var listening: CandyAnnouncedListening? = nil
@@ -109,6 +113,7 @@ extension CandyPlazaBody: Decodable {
         name = try c.decode(String.self, forKey: .name)
         avatar = try c.decodeIfPresent(String.self, forKey: .avatar)
         region = try c.decodeIfPresent(String.self, forKey: .region)
+        geo = try? c.decodeIfPresent([Double].self, forKey: .geo)
         client = try c.decodeIfPresent(String.self, forKey: .client)
         via = try c.decodeIfPresent([String].self, forKey: .via) ?? []
         listening = try c.decodeIfPresent(CandyAnnouncedListening.self, forKey: .listening)
@@ -153,6 +158,7 @@ private struct CandyGatewayEvent: Decodable {
     var nonce: String?
     var peerId: String?
     var region: String?
+    var geo: [Double]?
     var node: CandyNodeInfo?
     var iceServers: [CandyICEServer]?
     var providers: [CandyCandidate]?
@@ -285,6 +291,8 @@ final class CandyPlazaService: ObservableObject {
     @Published private(set) var nickname: String
     @Published private(set) var avatar: String?
     @Published private(set) var peerID = ""
+    /// Listen-while-downloading player for plaza songs.
+    let preview = CandyPreviewPlayer()
 
     private let userDefaults = UserDefaults.standard
     private let encoder = JSONEncoder()
@@ -298,6 +306,7 @@ final class CandyPlazaService: ObservableObject {
     private var socket: URLSessionWebSocketTask?
     private var node: CandyNodeInfo?
     private var region: String?
+    private var geo: [Double]?
     private var iceServers: [CandyICEServer] = [CandyICEServer(urls: ["stun:stun.l.google.com:19302"])]
     private var bootstrapNodes: [CandyNodeInfo] = []
     private var nodeIndex = 0
@@ -321,6 +330,7 @@ final class CandyPlazaService: ObservableObject {
     private var shareGeneration = 0
     private var lastSeq: Int64 = 0
     private var announcedPresence = false
+    private var previewFileObserver: AnyCancellable?
 
     private lazy var transfers: CandyReliableTransfer = {
         let engine = CandyReliableTransfer(folder: downloadFolder)
@@ -338,10 +348,15 @@ final class CandyPlazaService: ObservableObject {
             download.status = status
             download.state = .downloading
             self.downloads[file.id] = download
+            self.preview.downloadStatus(file.id, status)
+        }
+        engine.verified = { [weak self] file, bytes in
+            self?.preview.update(file.id, available: bytes)
         }
         engine.completed = { [weak self] file, url in
             guard let self else { return }
             self.downloads[file.id] = CandyPlazaDownload(file: file, progress: 1, state: .complete, localURL: url, status: "已完成")
+            self.preview.completed(file.id, url: url)
             guard !self.receiveHistory.contains(where: { $0.localURL == url }) else { return }
             self.receiveHistory.insert(CandyPlazaHistory(name: url.lastPathComponent, size: file.size, time: Date(),
                 fromName: file.ownerName, fileID: file.id, localURL: url), at: 0)
@@ -356,6 +371,7 @@ final class CandyPlazaService: ObservableObject {
                 download.state = .failed(message)
                 download.status = message
                 self.downloads[file.id] = download
+                self.preview.downloadStatus(file.id, message)
             } else {
                 self.errorMessage = message
             }
@@ -394,6 +410,9 @@ final class CandyPlazaService: ObservableObject {
         errorMessage = initialErrorMessage
         bootstrapNodes = cachedNodes
         defaults.set(initialNickname, forKey: "candy_nickname")
+        // Rows show which song is being previewed; forward only that (not the playback clock).
+        previewFileObserver = preview.$file.map { $0?.id }.removeDuplicates().dropFirst()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     // MARK: Lifecycle
@@ -570,6 +589,7 @@ final class CandyPlazaService: ObservableObject {
             handshakeTimeout?.cancel()
             node = event.node
             region = event.region
+            geo = event.geo.flatMap { $0.count == 2 ? $0 : nil }
             if let servers = event.iceServers, !servers.isEmpty { iceServers = servers }
             if event.peerId != peerID { errorMessage = "节点返回的身份与本机不一致。" }
             connectionState = .connected
@@ -708,9 +728,11 @@ final class CandyPlazaService: ObservableObject {
                 offlineAt = offlineSince[body.peerId] ?? now
                 offlineSince[body.peerId] = offlineAt
             }
+            let geo = body.geo.flatMap { $0.count == 2 && abs($0[0]) <= 90 && abs($0[1]) <= 180 ? $0 : nil }
             return CandyPlazaListening(clientId: body.peerId, ownerName: body.name, title: title,
                 artist: body.listening?.artist ?? (body.client == "web" ? "网页端" : ""),
-                isPlaying: body.listening?.isPlaying ?? true, region: body.region, file: file, avatar: body.avatar,
+                isPlaying: body.listening?.isPlaying ?? true, region: body.region,
+                latitude: geo?[0], longitude: geo?[1], file: file, avatar: body.avatar,
                 offlineAt: offlineAt)
         }.sorted { $0.clientId < $1.clientId }
     }
@@ -823,8 +845,8 @@ final class CandyPlazaService: ObservableObject {
         let via = (node.addrs ?? []).prefix(8).map { $0.contains("/p2p/") ? $0 : "\($0)/p2p/\(node.peerId)" }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         lastSeq = max(now, lastSeq + 1)
-        var body = CandyPlazaBody(peerId: peerID, name: nickname, avatar: avatar, region: region, client: "ios",
-            via: Array(via), files: [], seq: lastSeq)
+        var body = CandyPlazaBody(peerId: peerID, name: nickname, avatar: avatar, region: region,
+            geo: visible ? geo : nil, client: "ios", via: Array(via), files: [], seq: lastSeq)
         if visible, let track = listeningTrack {
             body.listening = CandyAnnouncedListening(title: String(track.title.prefix(300)),
                 artist: String(track.artist.prefix(300)), isPlaying: listeningIsPlaying)
@@ -855,9 +877,32 @@ final class CandyPlazaService: ObservableObject {
         transfers.download(file)
     }
 
-    func cancelDownload(_ fileID: String) { transfers.cancel(fileID) }
+    /// "听听看": plays a plaza song while it downloads (or the local copy if it is already here).
+    func listen(_ file: CandyPlazaFile) {
+        if let url = localCopy(of: file) {
+            preview.playLocal(file, url: url)
+            return
+        }
+        guard connectionState == .connected else {
+            errorMessage = "广场连接断开，请连接后重试。"
+            return
+        }
+        preview.stream(file, partial: transfers.partialURL(for: file), available: transfers.verifiedBytes(file.id) ?? 0)
+        if !transfers.isDownloading(file.id) { transfers.download(file) }
+    }
+
+    func localCopy(of file: CandyPlazaFile) -> URL? {
+        let candidates = [downloads[file.id]?.localURL] + receiveHistory.filter { $0.fileID == file.id }.map(\.localURL)
+        return candidates.compactMap { $0 }.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    func cancelDownload(_ fileID: String) {
+        transfers.cancel(fileID)
+        if let current = preview.file, current.id == fileID, localCopy(of: current) == nil { preview.stop() }
+    }
     func retryDownload(_ file: CandyPlazaFile) { transfers.download(file) }
     func clearDownloadPartial(_ file: CandyPlazaFile) {
+        if preview.file?.id == file.id { preview.stop() }
         transfers.clearPartial(file)
         downloads.removeValue(forKey: file.id)
     }

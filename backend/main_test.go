@@ -32,7 +32,7 @@ func startNode(t *testing.T, bootstrap ...string) (*node.Node, *httptest.Server)
 		t.Fatal(err)
 	}
 	ice := iceProvider(nil, []string{"turn:turn.example:3478"}, "secret")
-	srv := httptest.NewServer(routes(n, ice, func(*http.Request) string { return "测试" }, "", ""))
+	srv := httptest.NewServer(routes(n, ice, func(*http.Request) (string, []float64) { return "测试", []float64{31.2, 121.5} }, "", ""))
 	t.Cleanup(func() { srv.Close(); _ = n.Close() })
 	return n, srv
 }
@@ -78,7 +78,7 @@ func dial(t *testing.T, srv *httptest.Server) *terminal {
 	}()
 	welcome := term.expect("welcome", nil)
 	term.id, term.via = welcome.PeerID, welcome.Node.Addrs
-	if welcome.Region != "测试" || len(welcome.ICEServers) != 2 {
+	if welcome.Region != "测试" || len(welcome.Geo) != 2 || len(welcome.ICEServers) != 2 {
 		t.Fatalf("welcome: %+v", welcome)
 	}
 	return term
@@ -144,6 +144,17 @@ func TestVerifyEnvelope(t *testing.T) {
 	bad.Files[0].CID = sampleFile("y").CID
 	if _, err := node.VerifyEnvelope(envelope(key, bad), time.Now()); err == nil {
 		t.Fatal("cid not matching sha256 accepted")
+	}
+	located := body
+	located.Geo = []float64{31.2, 121.5}
+	if _, err := node.VerifyEnvelope(envelope(key, located), time.Now()); err != nil {
+		t.Fatalf("geo rejected: %v", err)
+	}
+	for _, geo := range [][]float64{{91, 0}, {0, 181}, {1}} {
+		located.Geo = geo
+		if _, err := node.VerifyEnvelope(envelope(key, located), time.Now()); err == nil {
+			t.Fatalf("invalid geo %v accepted", geo)
+		}
 	}
 	c, _ := node.ContentCID(sampleFile("hello").SHA256)
 	// Fixed vector shared with the Swift and JS implementations.

@@ -21,6 +21,8 @@ export interface PlazaBody {
   name: string
   avatar?: string
   region?: string
+  /** coarse [lat, lon] from the node's GeoIP (0.1°), shown on the iOS globe */
+  geo?: [number, number]
   client?: 'ios' | 'web'
   via: string[]
   listening?: { title: string; artist: string; isPlaying: boolean }

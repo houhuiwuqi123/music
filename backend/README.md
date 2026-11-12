@@ -75,7 +75,7 @@ go build -o server.exe .
 |---|---|
 | `GET /api/bootstrap` | `{"nodes":[{"peerId","addrs":[…/p2p/…],"gateway"}],"dht":"/auru/kad/1.0.0","topic":"auru/plaza/1"}`，即初始节点列表 |
 | `GET /api/ice` | 给浏览器使用的 `{"iceServers":[…]}` |
-| `GET /api/whoami` | `{"region":"广东省"}`，浏览器写进自己的公告 |
+| `GET /api/whoami` | `{"region":"广东省","geo":[23.1,113.3]}`，浏览器写进自己的公告（`geo` 是 GeoIP 城市坐标，取整到 0.1°，未知时为 null） |
 | `GET /api/plaza` | 当前广场快照（调试用） |
 | `GET /ws` | iOS 网关 WebSocket（见下文） |
 
@@ -97,7 +97,7 @@ go build -o server.exe .
 {"body":"<JSON 原文>","sig":"base64 Ed25519(\"auru-plaza:\"+body)","pub":"base64 libp2p 公钥 protobuf"}
 ```
 
-`body = {"v":1,"peerId","name","avatar?","region?","client":"ios|web","via":["/…/p2p/<node>"],"listening?":{"title","artist","isPlaying"},"files":[{"cid","name","size","sha256","kind":"listening|upload","mime?"}],"seq":<unix ms>,"bye?":true}`
+`body = {"v":1,"peerId","name","avatar?","region?","geo?":[lat,lon],"client":"ios|web","via":["/…/p2p/<node>"],"listening?":{"title","artist","isPlaying"},"files":[{"cid","name","size","sha256","kind":"listening|upload","mime?"}],"seq":<unix ms>,"bye?":true}`
 
 签名覆盖 body 的原始文本，所以三种语言都不需要规范化 JSON。节点校验以下几点：签名正确；`peerId` 与公钥对应；`seq` 单调递增（防重放）且时间误差在 −5 分钟到 +1 分钟之内；每个 `cid` 确实是对应 `sha256` 的 CID；字段长度不超限。客户端每 30 秒重发一次公告；超过 90 秒没有收到新公告视为离线，再过 60 秒从广场移除。签名的 `bye` 会立即移除。iOS 网关断开时，节点会把对应条目立即标为离线。
 
@@ -106,7 +106,7 @@ go build -o server.exe .
 ```text
 S→C {"type":"challenge","nonce","node":{peerId,addrs,gateway}}
 C→S {"type":"hello","publicKey":"base64 原始 Ed25519 公钥","signature":"base64 sign(\"auru-node-auth:\"+nonce+\":\"+nodePeerId)"}
-S→C {"type":"welcome","peerId","region","node","routing":[DHT 路由表],"iceServers","entries":[广场]}
+S→C {"type":"welcome","peerId","region","geo?","node","routing":[DHT 路由表],"iceServers","entries":[广场]}
 C→S {"type":"announce","id","envelope"}       → {"type":"announced"} | {"type":"error"}
 C→S {"type":"find","id","cid"}                → {"type":"providers","id","providers":[{peerId,node,nodeAddrs}]}
 C→S {"type":"signal","signal":{…}}            ← {"type":"signal","signal":{…}} | {"type":"signal-error"}

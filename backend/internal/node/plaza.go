@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -47,6 +48,7 @@ type PlazaBody struct {
 	Name      string          `json:"name"`
 	Avatar    string          `json:"avatar,omitempty"`
 	Region    string          `json:"region,omitempty"`
+	Geo       []float64       `json:"geo,omitempty"`    // coarse [lat, lon] from the node's GeoIP, for the globe
 	Client    string          `json:"client,omitempty"` // ios | web
 	Via       []string        `json:"via"`              // node multiaddrs ending in /p2p/<node>
 	Listening *PlazaListening `json:"listening,omitempty"`
@@ -116,6 +118,9 @@ func (b *PlazaBody) validate(now time.Time) error {
 		return errors.New("avatar too large")
 	case utf8.RuneCountInString(b.Region) > 64:
 		return errors.New("region too long")
+	case b.Geo != nil && (len(b.Geo) != 2 || math.IsNaN(b.Geo[0]) || math.IsNaN(b.Geo[1]) ||
+		math.Abs(b.Geo[0]) > 90 || math.Abs(b.Geo[1]) > 180):
+		return errors.New("geo must be [lat, lon]")
 	case len(b.Files) > 32:
 		return errors.New("too many files")
 	case len(b.Via) == 0 && !b.Bye, len(b.Via) > 8:

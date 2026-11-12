@@ -8,12 +8,15 @@ const root = path.resolve(__dirname, '..');
 const service = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Services', 'CandyPlazaService.swift'), 'utf8');
 const transfer = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Services', 'CandyReliableTransfer.swift'), 'utf8');
 const view = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'CandyPlazaView.swift'), 'utf8');
+const globe = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'CandyGlobeView.swift'), 'utf8');
+const land = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'CandyEarthLand.swift'), 'utf8');
+const preview = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Services', 'CandyPreviewPlayer.swift'), 'utf8');
 const plist = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Info.plist'), 'utf8');
 
 function verifyViewScopes(source) {
     // This limited structural check is not a Swift parser or type-checker.
     const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"/g, '');
-    const required = new Set(['CandyPlazaView', 'CandyFileStar', 'CandyProfileView']);
+    const required = new Set(['CandyPlazaView', 'CandyListenerRow', 'CandyPreviewBar', 'CandyProfileView']);
     let depth = 0;
     for (const match of code.matchAll(/\bstruct\s+(\w+)|[{}]/g)) {
         if (match[1]) {
@@ -32,64 +35,68 @@ function verifyViewScopes(source) {
     assert.equal(required.size, 0, 'Missing plaza view declarations');
 }
 
-function verifyStarMotion() {
-    const start = view.match(/let startX = ([\d.]+) \+ Double\(seed % 100\) \/ 100 \* ([\d.]+)/);
-    const end = view.match(/let endX = ([\d.]+) \+ Double\(\(seed >> 8\) % 100\) \/ 100 \* ([\d.]+)/);
-    const vertical = view.match(/let y = ([\d.]+) - progress \* ([\d.]+)/);
-    const scale = view.match(/let scale = ([\d.]+) - progress \* ([\d.]+)/);
-    assert.ok(start && end && vertical && scale, 'Missing meteor trajectory coefficients');
-    assert.ok(view.includes('let x = startX + (endX - startX) * progress'));
-    assert.ok(view.includes('let progress = time - Double(cycle)'));
-    assert.ok(view.includes('let time = max(0, date.timeIntervalSince(flightStartedAt) - Double(hash % 1000) / 1000 * 3) / 14'));
-    assert.ok(view.includes('flightStartedAt = flightStartedAt.addingTimeInterval(Date().timeIntervalSince(frozenDate))'));
-    for (let a = 0; a < 100; a++) {
-        for (let b = 0; b < 100; b++) {
-            const startX = Number(start[1]) + a / 100 * Number(start[2]);
-            const endX = Number(end[1]) + b / 100 * Number(end[2]);
-            assert.ok(startX >= 0.80 && startX <= 1, 'Must emerge at bottom-right');
-            assert.ok(endX >= 0 && endX <= 0.25, 'Must finish at top-left');
-            let previous = { x: Infinity, y: Infinity, size: Infinity };
-            for (let step = 0; step <= 20; step++) {
-                const progress = step / 20;
-                const x = startX + (endX - startX) * progress;
-                const y = Number(vertical[1]) - progress * Number(vertical[2]);
-                const size = Number(scale[1]) - progress * Number(scale[2]);
-                assert.ok(x < previous.x && y < previous.y && size < previous.size);
-                assert.ok(size > 0);
-                if (step === 0) assert.ok(y >= 0.80 && y <= 1);
-                if (step === 20) assert.ok(y >= 0 && y <= 0.25);
-                previous = { x, y, size };
-            }
-        }
+function verifyGlobe() {
+    // Land data decodes to closed rings of valid coordinates, Antarctica reaching the pole.
+    const encoded = [...land.matchAll(/^\s+"([A-Za-z0-9+/=]+)"/gm)].map(m => m[1]).join('');
+    const data = Buffer.from(encoded, 'base64');
+    assert.ok(data.length > 10000 && data.length % 4 === 0, 'land data size');
+    let rings = 0, points = 0, minLat = 90;
+    for (let i = 0; i < data.length; i += 4) {
+        const lon = data.readInt16LE(i), lat = data.readInt16LE(i + 2);
+        if (lon === 32767 && lat === 32767) { rings++; continue; }
+        assert.ok(Math.abs(lon) <= 18000 && Math.abs(lat) <= 9000, 'land coordinate range');
+        minLat = Math.min(minLat, lat / 100);
+        points++;
     }
-    for (const name of ['PlazaEmpty', 'PlazaOnline']) {
-        const folder = path.join(root, 'AURU MUSIC', 'Assets.xcassets', `${name}.imageset`);
-        const asset = JSON.parse(fs.readFileSync(path.join(folder, 'Contents.json'), 'utf8'));
-        assert.equal(asset.images[0].idiom, 'universal');
-        const image = fs.readFileSync(path.join(folder, asset.images[0].filename));
-        assert.equal(image.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
-        assert.equal(image.readUInt32BE(16), 768);
-        assert.equal(image.readUInt32BE(20), 768);
+    assert.ok(rings > 100 && points > 4000 && minLat === -90, `land rings ${rings}, points ${points}`);
+    assert.equal(data.readInt16LE(data.length - 4), 32767, 'last ring terminated');
+
+    // Mesh vertices, texture and markers share one lat/lon mapping.
+    assert.ok(globe.includes('Float(radius * cos(lat) * sin(lon)), Float(radius * sin(lat)), Float(radius * cos(lat) * cos(lon))'));
+    assert.ok(globe.includes('uvs.append(CGPoint(x: Double(j) / Double(slices), y: Double(i) / Double(stacks)))'));
+    assert.ok(globe.includes('let lat = 90 - 180 * Double(i) / Double(stacks)') && globe.includes('let lon = -180 + 360 * Double(j) / Double(slices)'));
+    assert.ok(globe.includes('CGPoint(x: (point.0 + 180) / 360 * size.width, y: (90 - point.1) / 180 * size.height)'));
+    assert.ok(globe.includes('cg.fillPath(using: .evenOdd)'));
+    // Focusing a place: yaw = -lon then pitch = lat must bring it to the front (0, 0, 1).
+    assert.ok(globe.includes('let wantedYaw = Float(-longitude * .pi / 180)') && globe.includes('Float(max(-60, min(60, latitude)) * .pi / 180)'));
+    assert.ok(globe.includes('pitchNode.eulerAngles = SCNVector3(pitch, 0, 0)') && globe.includes('yawNode.eulerAngles = SCNVector3(0, yaw, 0)'));
+    const rad = d => d * Math.PI / 180;
+    for (const [la, lo] of [[0, 0], [31.2, 121.5], [-33.9, 18.4], [51.5, -0.1], [60, -150]]) {
+        const lat = rad(la), lon = rad(lo);
+        let [x, y, z] = [Math.cos(lat) * Math.sin(lon), Math.sin(lat), Math.cos(lat) * Math.cos(lon)];
+        const b = -lon; // rotation about Y
+        [x, z] = [x * Math.cos(b) + z * Math.sin(b), -x * Math.sin(b) + z * Math.cos(b)];
+        const a = lat; // rotation about X
+        [y, z] = [y * Math.cos(a) - z * Math.sin(a), y * Math.sin(a) + z * Math.cos(a)];
+        assert.ok(Math.abs(x) < 1e-9 && Math.abs(y) < 1e-9 && Math.abs(z - 1) < 1e-9, `focus ${la},${lo}`);
     }
-    assert.ok(view.includes('Image(plaza.listeners.contains { !$0.isOffline } ? "PlazaOnline" : "PlazaEmpty")'));
-    assert.ok(view.includes('alignment: .bottomTrailing'));
-    assert.ok(view.includes('.offset(x: 23, y: 23)'));
+    // Markers come from signed coarse geo; one dot per 0.1° place.
+    assert.ok(view.includes('String(format: "%.1f,%.1f", lat, lon)') && view.includes('CandyGlobeView(markers: places'));
+    assert.ok(service.includes('geo = try? c.decodeIfPresent([Double].self, forKey: .geo)'));
+    assert.ok(service.includes('geo: visible ? geo : nil'));
+
+    // Listen-while-downloading serves verified bytes only, and switches to the saved file.
+    assert.ok(preview.includes('while data.currentOffset < min(end, available)'));
+    assert.ok(preview.includes('loader?.update(available: file.size, source: url)'));
+    assert.ok(transfer.includes('reportVerified(job, min(size, Int64(blockIndex) * Int64(candyBlockSize)))'));
+    assert.ok(transfer.indexOf('guard digest == blocks[blockIndex]') < transfer.indexOf('reportVerified(job, min(size'), 'report after the block check');
+    assert.ok(service.includes('preview.stream(file, partial: transfers.partialURL(for: file)'));
+    assert.ok(view.includes('plaza.listen(file)') && view.includes('if playing { plaza.preview.pause() }'));
 }
 
 function verifySource() {
     verifyViewScopes(view);
     assert.throws(() => verifyViewScopes(view.replace('private struct CandyProfileView', '{ private struct CandyProfileView')));
-    verifyStarMotion();
+    verifyGlobe();
     assert.ok(!view.includes('plaza.connectionError') && !view.includes('connectionTimeout'));
     assert.ok(!plist.includes('NSExceptionAllowsInsecureHTTPLoads'));
     const rootView = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'RootView.swift'), 'utf8');
     assert.ok(rootView.includes('Publishers.CombineLatest(player.$currentTrack, player.$isPlaying)'));
     assert.ok(rootView.includes('plaza.start()'));
     const settingsView = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'SettingsView.swift'), 'utf8');
-    assert.ok(settingsView.includes('plaza.setSharesListening($0)') && view.includes('ForEach(visibleListeners)'));
-    assert.ok(view.includes('listener.region ?? "地区未知"') && view.includes('.id(listener.id)'));
-    assert.ok(view.includes('action: { selectedFile = listener.file }'));
-    assert.ok(view.includes('paused: listener.isOffline') && view.includes('.truncationMode(.tail)'));
+    assert.ok(settingsView.includes('plaza.setSharesListening($0)') && view.includes('ForEach(listedListeners)'));
+    assert.ok(view.includes('listener.region ?? "地区未知"'));
+    assert.ok(view.includes('download: { selectedFile = listener.file }'));
     assert.ok(view.includes('Button("下载")') && view.includes('Button("取消", role: .cancel)'));
     assert.ok(view.includes('plaza.cancelDownload(download.id)') && view.includes('plaza.retryDownload(download.file)'));
 
@@ -123,7 +130,9 @@ function verifySource() {
     assert.doesNotMatch(service + transfer, /file-v2|transfer-request|share-retire|lease-refresh|gateway\/v2/, 'old hub protocol must be gone');
     const project = fs.readFileSync(path.join(root, 'MusicPlayer.xcodeproj', 'project.pbxproj'), 'utf8');
     assert.equal((project.match(/CandyReliableTransfer.swift in Sources/g) || []).length, 2);
-    assert.equal((project.match(/CandyPlazaService.swift in Sources/g) || []).length, 2);
+    for (const file of ['CandyPlazaService', 'CandyPreviewPlayer', 'CandyGlobeView', 'CandyEarthLand']) {
+        assert.equal((project.match(new RegExp(`${file}.swift in Sources`, 'g')) || []).length, 2, `${file} in Xcode target`);
+    }
     assert.ok(service.includes('now - $0.value >= 60'));
     console.log('PASS: client source/config regression checks (not a Swift build).');
 }

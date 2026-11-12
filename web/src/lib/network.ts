@@ -99,6 +99,7 @@ export class PlazaNetwork {
     status: 'offline' as 'connecting' | 'online' | 'offline',
     peerId: '',
     region: '',
+    geo: undefined as [number, number] | undefined,
     nodes: [] as string[],
     entries: {} as Record<string, PlazaEntry>,
     uploads: [] as UploadEntry[],
@@ -271,10 +272,11 @@ export class PlazaNetwork {
     try {
       const [ice, who] = await Promise.all([
         fetch(`${this.nodeURL}/api/ice`).then((r) => r.json()) as Promise<{ iceServers: RTCIceServer[] }>,
-        fetch(`${this.nodeURL}/api/whoami`).then((r) => r.json()) as Promise<{ region: string }>,
+        fetch(`${this.nodeURL}/api/whoami`).then((r) => r.json()) as Promise<{ region: string; geo?: [number, number] | null }>,
       ])
       if (ice.iceServers?.length) this.ice = ice.iceServers
       this.state.region = who.region ?? ''
+      this.state.geo = Array.isArray(who.geo) && who.geo.length === 2 ? [who.geo[0], who.geo[1]] : undefined
     } catch { /* keep defaults */ }
   }
 
@@ -331,6 +333,7 @@ export class PlazaNetwork {
       cid: s.manifest.cid, name: s.name, size: s.manifest.size, sha256: s.manifest.sha256, kind: 'upload', mime: s.mime || undefined,
     }))
     const body: PlazaBody = { v: 1, peerId: this.state.peerId, name: this.state.name, region: this.state.region || undefined,
+      geo: this.state.geo,
       client: 'web', via: this.via(), files: bye ? [] : files, seq: Date.now(), bye: bye || undefined }
     try {
       const env = await signEnvelope(this.key, body)
