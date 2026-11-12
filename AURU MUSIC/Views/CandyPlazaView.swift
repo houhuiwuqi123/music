@@ -30,12 +30,21 @@ struct CandyPlazaView: View {
 
     private var markers: [CandyGlobeMarker] {
         var places: [String: CandyGlobeMarker] = [:]
+        var shownRank: [String: Int] = [:]
         for listener in visibleListeners {
             guard let key = Self.placeKey(listener), let lat = listener.latitude, let lon = listener.longitude else { continue }
             var marker = places[key] ?? CandyGlobeMarker(id: key, latitude: lat, longitude: lon, online: false, count: 0)
             marker.count += 1
             marker.online = marker.online || !listener.isOffline
             marker.playing = marker.playing || (!listener.isOffline && listener.isPlaying)
+            // The zoomed-in bubble shows someone playing, else someone online.
+            let rank = listener.isOffline ? 0 : (listener.isPlaying ? 2 : 1)
+            if rank > shownRank[key, default: -1] {
+                shownRank[key] = rank
+                marker.name = listener.ownerName
+                marker.song = listener.artist.isEmpty ? listener.title : "\(listener.title) · \(listener.artist)"
+                marker.avatar = listener.avatar
+            }
             places[key] = marker
         }
         return places.values.sorted { $0.id < $1.id }
@@ -52,7 +61,6 @@ struct CandyPlazaView: View {
                 header
                 searchBar
                 globeCard
-                CandyPreviewBar(preview: plaza.preview)
                 listenerList
                 transferTasks
                 receiveHistory
@@ -494,6 +502,8 @@ private struct CandyListenButton: View {
 
     private var isCurrent: Bool { fileID != nil && preview.file?.id == fileID }
 
+    @State private var failure: String?
+
     private var isFailed: Bool {
         if case .failed = preview.phase { return true }
         return false
@@ -501,11 +511,14 @@ private struct CandyListenButton: View {
 
     var body: some View {
         Button {
-            if isCurrent { preview.toggle() } else { listen() }
+            // A failed preview is retried; otherwise the button pauses/resumes the current one.
+            if isCurrent && !isFailed { preview.toggle() } else { listen() }
         } label: {
             Group {
                 if isCurrent && isFailed {
                     Image(systemName: "exclamationmark.triangle.fill")
+                } else if isCurrent && preview.phase == .buffering {
+                    ProgressView().controlSize(.mini).tint(.pink)
                 } else if isCurrent {
                     CandyEqualizer(animating: preview.phase == .playing)
                 } else {
@@ -523,6 +536,16 @@ private struct CandyListenButton: View {
         .disabled(!enabled && !isCurrent)
         .animation(.easeInOut(duration: 0.2), value: isCurrent)
         .accessibilityLabel(isCurrent ? (preview.phase == .playing ? "暂停试听" : "继续试听") : "听听看")
+        .onChange(of: preview.phase) { phase in
+            // With no progress panel, a failed preview (e.g. Ogg, checksum mismatch) is explained once here.
+            guard isCurrent, case .failed(let message) = phase else { return }
+            failure = message
+        }
+        .alert("听听看", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+            Button("好", role: .cancel) { failure = nil }
+        } message: {
+            Text(failure ?? "")
+        }
     }
 }
 
@@ -547,91 +570,6 @@ private struct CandyEqualizer: View {
         let angle: Double = time.timeIntervalSinceReferenceDate * speed + index * 1.3
         let level: Double = (Foundation.sin(angle) + 1.0) / 2.0
         return CGFloat(4.0 + 11.0 * level)
-    }
-}
-
-private struct CandyPreviewBar: View {
-    @ObservedObject var preview: CandyPreviewPlayer
-
-    var body: some View {
-        if preview.isActive { content }
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 11) {
-                Button { preview.toggle() } label: {
-                    Image(systemName: preview.phase == .playing || preview.phase == .buffering ? "pause.fill" : "play.fill")
-                        .font(.title3)
-                        .frame(width: 42, height: 42)
-                        .background(Color.purple.opacity(0.18), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(isFailed)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                    Text(subtitle).font(.caption2).foregroundStyle(isFailed ? Color.red : Color.secondary).lineLimit(2)
-                }
-                Spacer(minLength: 4)
-                Button { preview.stop() } label: {
-                    Image(systemName: "xmark").font(.caption.weight(.bold)).padding(8)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("停止试听")
-            }
-            GeometryReader { geometry in
-                let width = geometry.size.width
-                let played = preview.duration > 0 ? min(1, preview.currentTime / preview.duration) : 0
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.08))
-                    Capsule().fill(Color.primary.opacity(0.18)).frame(width: width * preview.buffered)
-                    Capsule().fill(Color.purple).frame(width: width * played)
-                }
-                .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0).onEnded { value in
-                    preview.seek(to: max(0, min(1, value.location.x / max(1, width))))
-                })
-            }
-            .frame(height: 5)
-            HStack {
-                Text(Self.time(preview.currentTime))
-                Spacer()
-                Text(preview.duration > 0 ? Self.time(preview.duration) : "--:--")
-            }
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
-        .padding(13)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
-    }
-
-    private var isFailed: Bool {
-        if case .failed = preview.phase { return true }
-        return false
-    }
-
-    private var title: String {
-        guard let file = preview.file else { return "" }
-        return URL(fileURLWithPath: file.name).deletingPathExtension().lastPathComponent
-    }
-
-    private var subtitle: String {
-        let owner = preview.file.map { "来自 \($0.ownerName)" } ?? ""
-        switch preview.phase {
-        case .failed(let message): return message
-        case .buffering:
-            let detail = preview.status.isEmpty ? "缓冲中" : preview.status
-            return "\(owner) · \(detail) · 已接收 \(Int(preview.buffered * 100))%"
-        case .playing, .paused:
-            return preview.buffered < 1 ? "\(owner) · 边下边播 \(Int(preview.buffered * 100))%" : "\(owner) · 已完整接收"
-        case .idle: return owner
-        }
-    }
-
-    private static func time(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "--:--" }
-        let total = Int(seconds)
-        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 

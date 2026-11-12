@@ -12,6 +12,11 @@ struct CandyGlobeMarker: Identifiable, Equatable {
     /// Someone here is playing a song right now: the dot glows and pulses.
     var playing: Bool = false
     var count: Int
+    /// Who to show in the callout once zoomed in: the place's most relevant user.
+    var name: String = ""
+    var song: String = ""
+    /// Base64 JPEG avatar, as announced on the plaza.
+    var avatar: String? = nil
 }
 
 /// A slowly turning, draggable, pinch-zoomable globe (SceneKit). Land comes from the Natural Earth
@@ -81,6 +86,8 @@ struct CandyGlobeView: UIViewRepresentable {
         private var markers: [CandyGlobeMarker] = []
         private var selectedID: String?
         private var markerNodes: [String: SCNNode] = [:]
+        /// Avatar + song bubbles above online places; they fade in as the globe is zoomed.
+        private var callouts: [String: CandyGlobeCallout] = [:]
 
         override init() {
             super.init()
@@ -176,6 +183,48 @@ struct CandyGlobeView: UIViewRepresentable {
                 markerRoot.addChildNode(node)
                 markerNodes[marker.id] = node
             }
+            rebuildCallouts()
+        }
+
+        private func rebuildCallouts() {
+            let shown = Dictionary(uniqueKeysWithValues: markers.filter(\.online).map { ($0.id, $0) })
+            for (id, callout) in callouts where shown[id] == nil {
+                callout.removeFromSuperview()
+                callouts.removeValue(forKey: id)
+            }
+            guard let view else { return }
+            for (id, marker) in shown {
+                let callout = callouts[id] ?? CandyGlobeCallout()
+                if callout.superview == nil {
+                    callout.alpha = 0
+                    view.addSubview(callout)
+                    callouts[id] = callout
+                }
+                callout.configure(marker, selected: id == selectedID, dark: dark ?? false)
+            }
+            layoutCallouts()
+        }
+
+        /// Pins each bubble above its dot. Hidden while zoomed out (only the lit dots show),
+        /// fading in from 1.8x, and hidden when the place turns to the far side.
+        private func layoutCallouts() {
+            guard let view, !callouts.isEmpty else { return }
+            let reveal = CGFloat(max(0, min(1, (zoom - 1.8) / 0.7)))
+            for (id, callout) in callouts {
+                guard let node = markerNodes[id] else { callout.isHidden = true; continue }
+                let world = node.worldPosition
+                // The camera looks down -Z, so the near hemisphere has z > 0.
+                let facing = CGFloat(max(0, min(1, (world.z - 0.15) / 0.25)))
+                let selectedBoost: CGFloat = id == selectedID ? 1 : reveal
+                let alpha = facing * selectedBoost
+                callout.isHidden = alpha <= 0.01
+                guard !callout.isHidden else { continue }
+                let p = view.projectPoint(world)
+                let size = callout.bounds.size
+                callout.center = CGPoint(x: CGFloat(p.x), y: CGFloat(p.y) - size.height / 2 - 9)
+                callout.alpha = alpha
+                if id == selectedID { view.bringSubviewToFront(callout) }
+            }
         }
 
         private func makeMarker(_ marker: CandyGlobeMarker, selected: Bool) -> SCNNode {
@@ -244,6 +293,7 @@ struct CandyGlobeView: UIViewRepresentable {
             let now = link.timestamp
             let dt = Float(lastFrame == 0 ? 0 : min(0.1, now - lastFrame))
             lastFrame = now
+            defer { layoutCallouts() }
             if abs(zoomTarget - zoom) > 0.001 {
                 zoom += (zoomTarget - zoom) * min(1, dt * 8)
                 if abs(zoomTarget - zoom) <= 0.001 { zoom = zoomTarget }
@@ -331,6 +381,12 @@ struct CandyGlobeView: UIViewRepresentable {
         @objc private func tap(_ gesture: UITapGestureRecognizer) {
             guard let view else { return }
             let point = gesture.location(in: view)
+            // A visible bubble selects its place too.
+            if let id = callouts.first(where: { !$0.value.isHidden && $0.value.alpha > 0.3 && $0.value.frame.contains(point) })?.key {
+                idleSince = CACurrentMediaTime()
+                onSelect?(id)
+                return
+            }
             let hits = view.hitTest(point, options: [.searchMode: SCNHitTestSearchMode.all.rawValue,
                                                      .ignoreHiddenNodes: false])
             // Closest hit first: a dot behind the globe is hidden by the globe itself.
@@ -410,6 +466,63 @@ struct CandyGlobeView: UIViewRepresentable {
             textures[dark] = image
             return image
         }
+    }
+}
+
+/// A small bubble: avatar, user name and the song they share.
+private final class CandyGlobeCallout: UIView {
+    private let avatarView = UIImageView()
+    private let initialLabel = UILabel()
+    private let nameLabel = UILabel()
+    private let songLabel = UILabel()
+    private var avatarKey: String?
+
+    init() {
+        super.init(frame: CGRect(x: 0, y: 0, width: 120, height: 38))
+        isUserInteractionEnabled = false
+        layer.cornerRadius = 19
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.18
+        layer.shadowRadius = 6
+        layer.shadowOffset = CGSize(width: 0, height: 2)
+        for imageView in [avatarView] {
+            imageView.frame = CGRect(x: 4, y: 4, width: 30, height: 30)
+            imageView.layer.cornerRadius = 15
+            imageView.clipsToBounds = true
+            imageView.contentMode = .scaleAspectFill
+        }
+        initialLabel.frame = avatarView.frame
+        initialLabel.layer.cornerRadius = 15
+        initialLabel.clipsToBounds = true
+        initialLabel.textAlignment = .center
+        initialLabel.textColor = .white
+        initialLabel.font = .systemFont(ofSize: 13, weight: .bold)
+        initialLabel.backgroundColor = .systemPink
+        nameLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        songLabel.font = .systemFont(ofSize: 10, weight: .regular)
+        [initialLabel, avatarView, nameLabel, songLabel].forEach(addSubview)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func configure(_ marker: CandyGlobeMarker, selected: Bool, dark: Bool) {
+        backgroundColor = dark ? UIColor(white: 0.16, alpha: 0.94) : UIColor(white: 1, alpha: 0.95)
+        layer.borderWidth = selected ? 1.5 : 0
+        layer.borderColor = UIColor.systemPink.cgColor
+        nameLabel.textColor = dark ? .white : UIColor(white: 0.1, alpha: 1)
+        songLabel.textColor = dark ? UIColor(white: 0.72, alpha: 1) : UIColor(white: 0.4, alpha: 1)
+        nameLabel.text = marker.count > 1 ? "\(marker.name) 等\(marker.count)人" : marker.name
+        songLabel.text = marker.song.isEmpty ? "在线" : "\(marker.playing ? "♫" : "♪") \(marker.song)"
+        if avatarKey != marker.avatar {
+            avatarKey = marker.avatar
+            avatarView.image = marker.avatar.flatMap { Data(base64Encoded: $0) }.flatMap { UIImage(data: $0) }
+        }
+        avatarView.isHidden = avatarView.image == nil
+        initialLabel.text = String(marker.name.prefix(1))
+        let textWidth = min(118, max(nameLabel.sizeThatFits(.zero).width, songLabel.sizeThatFits(.zero).width))
+        nameLabel.frame = CGRect(x: 40, y: 5, width: textWidth, height: 15)
+        songLabel.frame = CGRect(x: 40, y: 20, width: textWidth, height: 13)
+        bounds = CGRect(x: 0, y: 0, width: 40 + textWidth + 12, height: 38)
     }
 }
 

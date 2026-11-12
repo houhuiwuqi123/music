@@ -16,7 +16,7 @@ const plist = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Info.plist'), 'utf8
 function verifyViewScopes(source) {
     // This limited structural check is not a Swift parser or type-checker.
     const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"/g, '');
-    const required = new Set(['CandyPlazaView', 'CandyListenerRow', 'CandyPreviewBar', 'CandyProfileView']);
+    const required = new Set(['CandyPlazaView', 'CandyListenerRow', 'CandyListenButton', 'CandyProfileView']);
     let depth = 0;
     for (const match of code.matchAll(/\bstruct\s+(\w+)|[{}]/g)) {
         if (match[1]) {
@@ -89,6 +89,10 @@ function verifyGlobe() {
     assert.ok(view.includes('CandyEqualizer(animating: preview.phase == .playing)'));
     assert.ok(view.includes('await library.importFiles(from: [url])'));
     assert.ok(!view.includes('个地点'), 'online/place counts are not shown');
+    // No preview panel above the list; zoomed-in globe shows avatar + song bubbles.
+    assert.ok(!view.includes('CandyPreviewBar'), 'preview progress panel removed');
+    assert.ok(globe.includes('let reveal = CGFloat(max(0, min(1, (zoom - 1.8) / 0.7)))') && globe.includes('view.projectPoint(world)'));
+    assert.ok(view.includes('marker.avatar = listener.avatar') && globe.includes('private final class CandyGlobeCallout: UIView'));
 }
 
 function verifySource() {
