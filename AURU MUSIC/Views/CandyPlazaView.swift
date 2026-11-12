@@ -197,7 +197,8 @@ struct CandyPlazaView: View {
             .disabled(zoom >= CandyGlobeView.maxZoom - 0.01)
             Divider().frame(width: 20)
             Button {
-                zoom = zoom / 1.6 < 1.05 ? 1 : zoom / 1.6
+                let smaller: Double = zoom / 1.6
+                zoom = smaller < 1.05 ? 1.0 : smaller
             } label: {
                 Image(systemName: "minus").frame(width: 34, height: 34)
             }
@@ -340,7 +341,7 @@ struct CandyPlazaView: View {
                 importing.insert(entry.id)
                 Task { @MainActor in
                     await library.importFiles(from: [url])
-                    importing.remove(entry.id)
+                    _ = importing.remove(entry.id)
                 }
             } label: {
                 Label("导入", systemImage: "square.and.arrow.down")
@@ -513,7 +514,7 @@ private struct CandyListenButton: View {
             }
             .font(.caption.weight(.bold))
             .foregroundStyle(isCurrent ? Color.pink : Color.primary)
-            .frame(minWidth: isCurrent ? 44 : nil, minHeight: 16)
+            .frame(minWidth: isCurrent ? CGFloat(44) : nil, minHeight: CGFloat(16))
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background((isCurrent ? Color.pink : Color.purple).opacity(0.16), in: Capsule())
@@ -530,15 +531,22 @@ private struct CandyEqualizer: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animating)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
             HStack(alignment: .bottom, spacing: 2.5) {
                 ForEach(0..<4, id: \.self) { bar in
-                    let level = animating ? (sin(t * (6 + Double(bar) * 1.9) + Double(bar) * 1.3) + 1) / 2 : 0.3
-                    Capsule().frame(width: 3, height: 4 + 11 * level)
+                    Capsule().frame(width: 3, height: Self.height(bar: bar, time: context.date, animating: animating))
                 }
             }
             .frame(height: 15, alignment: .bottom)
         }
+    }
+
+    private static func height(bar: Int, time: Date, animating: Bool) -> CGFloat {
+        guard animating else { return 7 }
+        let index = Double(bar)
+        let speed: Double = 6.0 + index * 1.9
+        let angle: Double = time.timeIntervalSinceReferenceDate * speed + index * 1.3
+        let level: Double = (Foundation.sin(angle) + 1.0) / 2.0
+        return CGFloat(4.0 + 11.0 * level)
     }
 }
 
