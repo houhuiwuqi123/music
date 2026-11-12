@@ -32,7 +32,7 @@ func main() {
 	keyPath := flag.String("key", "./state/node.key", "persisted node identity")
 	listen := flag.String("listen", "/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1,/ip4/127.0.0.1/tcp/4002/ws",
 		"comma-separated libp2p listen multiaddrs")
-	announce := flag.String("announce", os.Getenv("NODE_ANNOUNCE"), "comma-separated public multiaddrs to advertise (e.g. /dns4/host/tcp/8443/wss)")
+	announce := flag.String("announce", os.Getenv("NODE_ANNOUNCE"), "comma-separated public multiaddrs to advertise (e.g. /dns4/host/tcp/443/wss)")
 	bootstrap := flag.String("bootstrap", os.Getenv("NODE_BOOTSTRAP"), "comma-separated multiaddrs of other nodes (/…/p2p/<id>)")
 	gatewayURL := flag.String("gateway-url", os.Getenv("NODE_GATEWAY_URL"), "public wss:// URL of this node's /ws gateway, listed in /api/bootstrap")
 	webDir := flag.String("web-dir", "", "optional directory with the built Vue app to serve at /")

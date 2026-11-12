@@ -48,14 +48,14 @@ go test ./... -count=1
 go build -o server.exe .
 .\server.exe -http 127.0.0.1:8003 -key .\state\node.key `
   -listen '/ip4/127.0.0.1/tcp/4002/ws' `
-  -announce '/dns4/music.webtrc.eu.cc/tcp/8443/wss' `
+  -announce '/dns4/music.webtrc.eu.cc/tcp/443/wss' `
   -gateway-url 'wss://music.webtrc.eu.cc/ws' -web-dir ..\web\dist -geoip-db .\GeoLite2-City2.mmdb
 ```
 
 | 参数 / 环境变量 | 说明 |
 |---|---|
 | `-key` | 节点身份。首次启动时生成，之后保持不变，peer ID 由它决定。请备份并限制权限。 |
-| `-listen` | libp2p 监听地址。`…/4002/ws` 只绑定本机，由 nginx 的 8443 端口终止 TLS 后转发。多节点时再加 `/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1`（不传该参数时的默认值包含它们）。 |
+| `-listen` | libp2p 监听地址。`…/4002/ws` 只绑定本机，由 nginx 443 端口上路径 `/` 的 WebSocket 请求转发进来。多节点时再加 `/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1`（不传该参数时的默认值包含它们）。 |
 | `-announce` / `NODE_ANNOUNCE` | 对外公布的地址。浏览器只能使用 wss，节点之间互联使用源站公网 IP 的 tcp/quic（Cloudflare 不代理原始 TCP/UDP）。 |
 | `-bootstrap` / `NODE_BOOTSTRAP` | 其他节点的 `/…/p2p/<peerId>` 地址，多个用逗号分隔。只有一台节点时留空。 |
 | `-gateway-url` / `NODE_GATEWAY_URL` | 本节点 iOS 网关的公开 wss 地址，会出现在 `/api/bootstrap` 结果里。 |
@@ -63,7 +63,7 @@ go build -o server.exe .
 | `STUN_URLS`、`TURN_URLS`、`TURN_REST_SECRET` | ICE 配置。TURN 采用 coturn REST 凭据，有效期 1 小时，见 `deploy/compose.yaml`。 |
 | `-geoip-db`、`-trusted-proxies` | 本地 MMDB 地区查询（不调用外部服务）。回环地址默认视为可信代理。 |
 
-需要放行的端口：单节点只需 443/tcp 和 8443/tcp（建议只放行 Cloudflare IP 段）；多节点时再放行 4001/tcp、4001/udp。nginx 模板见 `deploy/nginx.conf`，systemd 模板见 `webtrc.service`。
+需要放行的端口：单节点只需 443/tcp（建议只放行 Cloudflare IP 段）；多节点时再放行 4001/tcp、4001/udp。nginx 模板见 `deploy/nginx.conf`，systemd 模板见 `webtrc.service`。
 
 ### 增加一台节点
 

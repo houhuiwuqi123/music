@@ -19,7 +19,7 @@ struct DiskVerification {
         try require(peerID == "12D3KooWA4Xop1JaT3MHxwYMkCepYsv4iPVopMXwCz5iHYdBfeSB", "libp2p Ed25519 peer ID vector")
         let sha = hex(Data("song".utf8))
         let body = CandyPlazaBody(peerId: peerID, name: "游客1234", region: "测试", client: "ios",
-            via: ["/dns4/music.webtrc.eu.cc/tcp/8443/wss/p2p/12D3KooWA4Xop1JaT3MHxwYMkCepYsv4iPVopMXwCz5iHYdBfeSB"],
+            via: ["/dns4/music.webtrc.eu.cc/tcp/443/wss/p2p/12D3KooWA4Xop1JaT3MHxwYMkCepYsv4iPVopMXwCz5iHYdBfeSB"],
             listening: CandyAnnouncedListening(title: "晴天", artist: "周杰伦", isPlaying: true),
             files: [CandyAnnouncedFile(cid: CandyCodec.cid(sha256Hex: sha)!, name: "song.mp3", size: 4, sha256: sha, kind: "listening")],
             seq: Int64(Date().timeIntervalSince1970 * 1000))

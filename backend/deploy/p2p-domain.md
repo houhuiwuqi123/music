@@ -9,7 +9,7 @@
 | 域名 | Cloudflare 代理 | 端口 | 用途 | 由谁处理 |
 |---|---|---|---|---|
 | `music.webtrc.eu.cc` | 开启（橙云） | 443 | 网页、`/api/`、iOS 网关 `/ws` | nginx → 127.0.0.1:8003 |
-| `music.webtrc.eu.cc` | 开启（橙云） | 8443 | 浏览器的 libp2p wss | nginx → 127.0.0.1:4002 |
+| `music.webtrc.eu.cc` | 开启（橙云） | 443（`/` + Upgrade） | 浏览器的 libp2p wss | nginx → 127.0.0.1:4002 |
 | `p2p.webtrc.eu.cc` | **关闭（灰云，仅 DNS）** | 4001/tcp、4001/udp | 节点之间的 Kademlia / GossipSub / 信令转发 | Go 进程直接监听 |
 
 ## 先了解：域名并不能隐藏 IP
@@ -28,7 +28,7 @@ Cloudflare 的普通代理只转发 HTTP/HTTPS/WebSocket，不转发原始 TCP/U
 2. **单节点时不公布 4001**。只有一台节点时，节点间互联用不到，可以把 `NODE_ANNOUNCE` 里两条 `p2p.webtrc.eu.cc` 删掉，也不创建这个 DNS 记录。浏览器和 iOS 不受影响，它们只用 `music.webtrc.eu.cc`。
 3. **使用 Cloudflare Spectrum**（付费）代理 TCP/UDP，可以保持橙云，但要另外配置。
 
-主站源站本身也应只允许 Cloudflare 的 IP 段访问 443 和 8443（宝塔防火墙或云厂商安全组）。这样即使 IP 泄露，也无法绕过 Cloudflare 直接访问网站。
+主站源站本身也应只允许 Cloudflare 的 IP 段访问 443（宝塔防火墙或云厂商安全组）。这样即使 IP 泄露，也无法绕过 Cloudflare 直接访问网站。
 
 ## 1. 添加 DNS 记录（Cloudflare 控制台）
 
@@ -55,7 +55,6 @@ dig +short p2p.webtrc.eu.cc
 |---|---|---|---|
 | 4001 | TCP | 0.0.0.0/0 | 节点互联（libp2p TCP） |
 | 4001 | UDP | 0.0.0.0/0 | 节点互联（QUIC） |
-| 8443 | TCP | Cloudflare IP 段 | 浏览器的 libp2p wss（经 Cloudflare） |
 | 443 | TCP | Cloudflare IP 段 | 网站 |
 
 8003 和 4002 只监听在 127.0.0.1，**不要**对外开放。
@@ -65,7 +64,7 @@ dig +short p2p.webtrc.eu.cc
 修改 `backend/webtrc.service`，让节点对外监听并公布 4001：
 
 ```ini
-Environment=NODE_ANNOUNCE=/dns4/music.webtrc.eu.cc/tcp/8443/wss,/dns4/p2p.webtrc.eu.cc/tcp/4001,/dns4/p2p.webtrc.eu.cc/udp/4001/quic-v1
+Environment=NODE_ANNOUNCE=/dns4/music.webtrc.eu.cc/tcp/443/wss,/dns4/p2p.webtrc.eu.cc/tcp/4001,/dns4/p2p.webtrc.eu.cc/udp/4001/quic-v1
 ExecStart=... -listen /ip4/127.0.0.1/tcp/4002/ws,/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1 ...
 ```
 

@@ -125,7 +125,7 @@ cmd_check() {
   if body="$(curl -fsS --max-time 5 "http://$HTTP_ADDR/api/bootstrap")"; then
     info "/api/bootstrap："
     echo "$body"
-    echo "$body" | grep -q '/tcp/8443/wss' || warn "公布地址中没有浏览器用的 wss 地址，请检查 NODE_ANNOUNCE"
+    echo "$body" | grep -q '/tcp/443/wss' || warn "公布地址中没有浏览器用的 wss 地址，请检查 NODE_ANNOUNCE"
     if echo "$body" | grep -q '/tcp/4001'; then
       info "多节点模式：公布了 4001，确认安全组/宝塔防火墙已放行 4001 tcp/udp"
       command -v dig >/dev/null 2>&1 && info "p2p.webtrc.eu.cc 解析：$(dig +short p2p.webtrc.eu.cc | tr '\n' ' ')"
