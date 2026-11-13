@@ -11,6 +11,7 @@ const editingName = ref(false)
 const nameDraft = ref('')
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement>()
+const avatarInput = ref<HTMLInputElement>()
 
 onMounted(() => {
   net.start().catch((error: Error) => { s.error = `网络启动失败：${error.message}` })
@@ -21,7 +22,9 @@ const statusText = computed(() => ({ online: '在线', connecting: '连线中', 
 const entries = computed(() => {
   const q = query.value.trim().toLowerCase()
   return Object.values(s.entries)
-    .filter((e: PlazaEntry) => !q || [e.body.name, e.body.listening?.title, e.body.listening?.artist, ...e.body.files.map((f) => f.name)]
+    // Matches user name, song (title / artist / file name) or region.
+    .filter((e: PlazaEntry) => !q || [e.body.name, e.body.region, e.body.listening?.title, e.body.listening?.artist,
+      ...e.body.files.map((f) => f.name)]
       .some((v) => v?.toLowerCase().includes(q)))
     .sort((a, b) => Number(a.offline) - Number(b.offline) || b.body.seq - a.body.seq)
 })
@@ -61,6 +64,40 @@ function saveName() {
   editingName.value = false
 }
 
+const AVATAR_SIDE = 96 // same size as the iOS app
+
+/** Centre-crops the picked image to a 96×96 JPEG, small enough for the announcement limit. */
+async function makeAvatar(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file)
+  const side = Math.min(bitmap.width, bitmap.height)
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = AVATAR_SIDE
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('浏览器不支持 canvas')
+  ctx.fillStyle = '#fff' // transparent PNGs would otherwise turn black in JPEG
+  ctx.fillRect(0, 0, AVATAR_SIDE, AVATAR_SIDE)
+  ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, AVATAR_SIDE, AVATAR_SIDE)
+  bitmap.close()
+  for (const quality of [0.8, 0.65, 0.5, 0.35]) {
+    const url = canvas.toDataURL('image/jpeg', quality)
+    const base64 = url.slice(url.indexOf(',') + 1)
+    if (base64.length <= 40_000) return base64 // node accepts up to 48 KB; iOS sends ≤ 32 KB raw
+  }
+  throw new Error('无法压缩到支持的大小')
+}
+
+async function pickAvatar(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    net.setAvatar(await makeAvatar(file))
+  } catch (error) {
+    s.error = `头像设置失败：${(error as Error).message}`
+  }
+}
+
 function copy(text: string) {
   void navigator.clipboard?.writeText(text)
 }
@@ -73,6 +110,13 @@ const downloading = (cid: string) => s.downloads.some((d) => d.cid === cid && d.
     <header class="top">
       <div class="brand"><span class="logo">🍬</span><h1>Candy 广场</h1></div>
       <div class="me">
+        <button class="me-avatar" title="更换头像" @click="avatarInput?.click()">
+          <img v-if="s.avatar" class="avatar" :src="`data:image/jpeg;base64,${s.avatar}`" alt="我的头像" />
+          <div v-else class="avatar star">★</div>
+          <span class="cam">✎</span>
+        </button>
+        <input ref="avatarInput" type="file" accept="image/*" hidden @change="pickAvatar" />
+        <button v-if="s.avatar" class="link" title="移除头像" @click="net.setAvatar('')">移除头像</button>
         <template v-if="editingName">
           <input v-model="nameDraft" type="text" maxlength="40" @keyup.enter="saveName" />
           <button @click="saveName">保存</button>
@@ -95,7 +139,7 @@ const downloading = (cid: string) => s.downloads.some((d) => d.cid === cid && d.
         <div class="panel">
           <div class="panel-head">
             <h2>广场</h2>
-            <input v-model="query" type="text" placeholder="搜索歌曲、艺人或用户…" />
+            <input v-model="query" type="text" placeholder="搜索用户名、歌曲名或地区…" />
           </div>
           <p v-if="!entries.length" class="empty">
             {{ s.status === 'online' ? '暂时没有其他在线用户。打开 iOS 端播放歌曲，或在右侧分享文件。' : '正在连接引导节点…' }}
@@ -185,6 +229,13 @@ h2 { margin: 0 0 12px; font-size: 16px; }
 .me { display: flex; align-items: center; gap: 8px; }
 .me input { width: 160px; }
 .name { border-radius: 999px; }
+.me-avatar { position: relative; padding: 0; border: 0; background: none; border-radius: 50%; cursor: pointer; flex: none; }
+.me-avatar .avatar { width: 38px; height: 38px; }
+.me-avatar .cam { position: absolute; right: -2px; bottom: -2px; width: 17px; height: 17px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 10px; color: #fff; background: var(--accent); border: 2px solid var(--panel); }
+.me-avatar:hover .avatar { opacity: 0.8; }
+.link { background: none; border: 0; padding: 4px 2px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.link:hover { color: var(--text); }
 .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 6px 11px;
   border-radius: 999px; background: var(--panel); border: 1px solid var(--line); }
 .status i { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }

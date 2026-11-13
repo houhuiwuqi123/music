@@ -105,6 +105,8 @@ export class PlazaNetwork {
     uploads: [] as UploadEntry[],
     downloads: [] as DownloadTask[],
     name: '',
+    /** base64 JPEG (96×96, same as iOS), or '' for none */
+    avatar: '',
     error: '',
   })
 
@@ -130,6 +132,9 @@ export class PlazaNetwork {
     this.state.name = (() => {
       try { return localStorage.getItem('auru-name') ?? '' } catch { return '' }
     })() || `网页访客${Math.floor(1000 + Math.random() * 9000)}`
+    this.state.avatar = (() => {
+      try { return localStorage.getItem('auru-avatar') ?? '' } catch { return '' }
+    })()
     this.resetWake()
   }
 
@@ -206,6 +211,16 @@ export class PlazaNetwork {
     if (!trimmed) return
     this.state.name = trimmed
     try { localStorage.setItem('auru-name', trimmed) } catch { /* ignore */ }
+    void this.announce()
+  }
+
+  /** Sets (base64 JPEG) or clears ('') the avatar shown to other users. */
+  setAvatar(avatar: string) {
+    this.state.avatar = avatar
+    try {
+      if (avatar) localStorage.setItem('auru-avatar', avatar)
+      else localStorage.removeItem('auru-avatar')
+    } catch { /* ignore */ }
     void this.announce()
   }
 
@@ -332,7 +347,8 @@ export class PlazaNetwork {
     const files: PlazaFile[] = [...this.sources.values()].map((s) => ({
       cid: s.manifest.cid, name: s.name, size: s.manifest.size, sha256: s.manifest.sha256, kind: 'upload', mime: s.mime || undefined,
     }))
-    const body: PlazaBody = { v: 1, peerId: this.state.peerId, name: this.state.name, region: this.state.region || undefined,
+    const body: PlazaBody = { v: 1, peerId: this.state.peerId, name: this.state.name,
+      avatar: this.state.avatar || undefined, region: this.state.region || undefined,
       geo: this.state.geo,
       client: 'web', via: this.via(), files: bye ? [] : files, seq: Date.now(), bye: bye || undefined }
     try {
