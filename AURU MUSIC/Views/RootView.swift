@@ -240,7 +240,7 @@ struct RootView: View {
     }
 
     /// Home / Plaza / Library in one bordered capsule, Setting as its own circle on the right.
-    /// No fill, so the app background shows; 8pt between the buttons and the border all round.
+    /// No fill, so the app background shows; 5pt between the buttons and the border all round.
     private var tabBar: some View {
         HStack(spacing: 12) {
             HStack(spacing: 0) {
@@ -248,7 +248,7 @@ struct RootView: View {
                     tabButton(tab)
                 }
             }
-            .padding(8)
+            .padding(5)
             .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 1))
 
             Button { select(.settings) } label: {
@@ -257,7 +257,7 @@ struct RootView: View {
                     .foregroundStyle(selectedTab == .settings ? Color.purple : .white)
                     .frame(width: 46, height: 46)
                     .background(Circle().fill(.white.opacity(selectedTab == .settings ? 0.12 : 0)))
-                    .padding(8)
+                    .padding(5)
                     .overlay(Circle().stroke(.white.opacity(0.14), lineWidth: 1))
                     .contentShape(Circle())
             }
@@ -265,7 +265,9 @@ struct RootView: View {
             .accessibilityLabel(settings.text("settings"))
         }
         .padding(.horizontal, 16)
-        .padding(.top, 4)
+        // Pull the bar into the home-indicator area so it doesn't float high above the bottom edge.
+        .padding(.top, -6) // the parent VStack adds 10pt above; keep only 4
+        .padding(.bottom, -18)
     }
 
     private func tabButton(_ tab: Tab) -> some View {
