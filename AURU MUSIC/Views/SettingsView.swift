@@ -8,6 +8,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
+    /// False when shown as the Settings tab instead of a sheet.
+    var showsDone = true
 
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.8"
@@ -54,8 +56,10 @@ struct SettingsView: View {
             .background(DarkBackground())
             .navigationTitle(settings.text("settings"))
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(settings.text("done")) { dismiss() }
+                if showsDone {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(settings.text("done")) { dismiss() }
+                    }
                 }
             }
         }

@@ -412,12 +412,12 @@ struct SongsView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabSelected)) { notification in
-            guard notification.object as? Int == 1 else { return }
+            guard notification.object as? Int == RootView.Tab.legacySongs else { return }
             navigationPath.removeAll()
             mediaTab = .songs
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
-            guard notification.object as? Int == 1 else { return }
+            guard notification.object as? Int == RootView.Tab.legacySongs else { return }
             navigationPath.removeAll()
             mediaTab = .songs
             scrollResetToken += 1
@@ -676,11 +676,11 @@ struct ArtistsView: View {
             .navigationDestination(for: Artist.self) { ArtistDetailView(artist: $0) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabSelected)) { notification in
-            guard notification.object as? Int == 2 else { return }
+            guard notification.object as? Int == RootView.Tab.legacyArtists else { return }
             navigationPath.removeAll()
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
-            guard notification.object as? Int == 2 else { return }
+            guard notification.object as? Int == RootView.Tab.legacyArtists else { return }
             navigationPath.removeAll()
             scrollResetToken += 1
         }
@@ -921,7 +921,7 @@ struct PlaylistsView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { notification in
-            guard notification.object as? Int == 4 else { return }
+            guard notification.object as? Int == RootView.Tab.legacyPlaylists else { return }
             navigationPath.removeAll()
             scrollResetToken += 1
         }

@@ -107,7 +107,7 @@ function verifySource() {
     assert.ok(rootView.includes('Publishers.CombineLatest(player.$currentTrack, player.$isPlaying)'));
     assert.ok(rootView.includes('plaza.start()'));
     const settingsView = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Views', 'SettingsView.swift'), 'utf8');
-    assert.ok(settingsView.includes('plaza.setSharesListening($0)') && view.includes('ForEach(listedListeners)'));
+    assert.ok(settingsView.includes('plaza.setSharesListening($0)') && view.includes('ForEach(shownListeners)'));
     assert.ok(view.includes('listener.region ?? "地区未知"'));
     assert.ok(view.includes('download: { selectedFile = listener.file }'));
     assert.ok(view.includes('Button("下载")') && view.includes('Button("取消", role: .cancel)'));
@@ -143,7 +143,7 @@ function verifySource() {
     assert.doesNotMatch(service + transfer, /file-v2|transfer-request|share-retire|lease-refresh|gateway\/v2/, 'old hub protocol must be gone');
     const project = fs.readFileSync(path.join(root, 'MusicPlayer.xcodeproj', 'project.pbxproj'), 'utf8');
     assert.equal((project.match(/CandyReliableTransfer.swift in Sources/g) || []).length, 2);
-    for (const file of ['CandyPlazaService', 'CandyPreviewPlayer', 'CandyGlobeView', 'CandyEarthLand']) {
+    for (const file of ['CandyPlazaService', 'CandyPreviewPlayer', 'CandyGlobeView', 'CandyEarthLand', 'LibraryView']) {
         assert.equal((project.match(new RegExp(`${file}.swift in Sources`, 'g')) || []).length, 2, `${file} in Xcode target`);
     }
     assert.ok(service.includes('now - $0.value >= 60'));

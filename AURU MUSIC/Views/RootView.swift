@@ -4,18 +4,26 @@ import UIKit
 import UniformTypeIdentifiers
 
 struct RootView: View {
+    /// Tab bar order: Home / Plaza / Library / Settings. `index` is the tab bar position,
+    /// which is what the tab (re)select notifications carry.
     enum Tab: Hashable {
-        case home, songs, artists, plaza, playlists
+        case home, plaza, library, settings
 
         var index: Int {
             switch self {
             case .home: return 0
-            case .songs: return 1
-            case .artists: return 2
-            case .plaza: return 3
-            case .playlists: return 4
+            case .plaza: return 1
+            case .library: return 2
+            case .settings: return 3
             }
         }
+
+        /// Songs, Artists and Playlists used to be tabs and still listen for their old tab
+        /// numbers; inside Library nothing posts these, and LibraryView handles reselect.
+        static let legacySongs = -1, legacyArtists = -2, legacyPlaylists = -4
+
+        /// Library and Settings draw their own large-title headers.
+        var showsTopBar: Bool { self == .home || self == .plaza }
     }
 
     @EnvironmentObject private var library: LocalMusicLibrary
@@ -28,7 +36,6 @@ struct RootView: View {
     @State private var selectedTab: Tab = .home
     @State private var searchText = ""
     @State private var showsImporter = false
-    @State private var showsSettings = false
     @State private var showsRecognition = false
     @State private var showsNowPlaying = false
     @State private var selectedArtist: Artist?
@@ -39,15 +46,19 @@ struct RootView: View {
             DarkBackground()
 
             VStack(spacing: 10) {
-                topBar
-                searchBar
+                if selectedTab.showsTopBar {
+                    topBar
+                    searchBar
+                }
 
                 TabView(selection: $selectedTab) {
                     HomeView().tag(Tab.home).tabItem { Label(settings.text("home"), systemImage: "house.fill") }
-                    SongsView().tag(Tab.songs).tabItem { Label(settings.text("songs"), systemImage: "music.note.list") }
-                    ArtistsView().tag(Tab.artists).tabItem { Label(settings.text("artists"), systemImage: "person.2.fill") }
                     CandyPlazaView().tag(Tab.plaza).tabItem { Label(settings.text("plaza"), systemImage: "sparkles") }
-                    PlaylistsView().tag(Tab.playlists).tabItem { Label(settings.text("playlists"), systemImage: "rectangle.stack.fill") }
+                    LibraryView(tabIndex: Tab.library.index, onImport: { showsImporter = true })
+                        .tag(Tab.library)
+                        .tabItem { Label(settings.text("library"), systemImage: "music.note.house.fill") }
+                    SettingsView(showsDone: false).tag(Tab.settings)
+                        .tabItem { Label(settings.text("settings"), systemImage: "gearshape.fill") }
                 }
                 .tint(.purple)
                 .toolbarBackground(Color(red: 0.025, green: 0.03, blue: 0.055), for: .tabBar)
@@ -90,7 +101,6 @@ struct RootView: View {
             allowsMultipleSelection: true,
             onCompletion: handleFileImport
         )
-        .sheet(isPresented: $showsSettings) { SettingsView() }
         .fullScreenCover(isPresented: $showsRecognition) { SongRecognitionView() }
         .sheet(item: $selectedArtist) { artist in
             NavigationStack { ArtistDetailView(artist: artist) }
@@ -156,9 +166,8 @@ struct RootView: View {
 
     private var topBar: some View {
         HStack(spacing: 10) {
-            Button { showsSettings = true } label: {
-                Image(systemName: "gearshape.fill").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
-            }
+            // Keeps the title centred against the two buttons on the right.
+            Color.clear.frame(width: 94, height: 42)
             Spacer()
             VStack(spacing: 1) {
                 Text("AURU MUSIC")
@@ -243,10 +252,9 @@ struct RootView: View {
     private var currentTitle: String {
         switch selectedTab {
         case .home: return settings.text("home")
-        case .songs: return settings.text("songs")
-        case .artists: return settings.text("artists")
         case .plaza: return settings.text("plaza")
-        case .playlists: return settings.text("playlists")
+        case .library: return settings.text("library")
+        case .settings: return settings.text("settings")
         }
     }
 

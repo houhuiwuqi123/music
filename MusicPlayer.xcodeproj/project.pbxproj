@@ -30,6 +30,7 @@
 		A10000000000000000000017 /* CandyEarthLand.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000019 /* CandyEarthLand.swift */; };
 		A10000000000000000000018 /* CandyGlobeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* CandyGlobeView.swift */; };
 		A10000000000000000000019 /* CandyPreviewPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000021 /* CandyPreviewPlayer.swift */; };
+		A1000000000000000000001A /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000022 /* LibraryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -58,6 +59,7 @@
 		B10000000000000000000019 /* CandyEarthLand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CandyEarthLand.swift; sourceTree = "<group>"; };
 		B10000000000000000000020 /* CandyGlobeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CandyGlobeView.swift; sourceTree = "<group>"; };
 		B10000000000000000000021 /* CandyPreviewPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CandyPreviewPlayer.swift; sourceTree = "<group>"; };
+		B10000000000000000000022 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -135,6 +137,7 @@
 				B10000000000000000000010 /* FeatureViews.swift */,
 				B10000000000000000000011 /* SettingsView.swift */,
 				B10000000000000000000012 /* RootView.swift */,
+				B10000000000000000000022 /* LibraryView.swift */,
 				B10000000000000000000014 /* SupportAndRecognitionViews.swift */,
 				B10000000000000000000019 /* CandyEarthLand.swift */,
 				B10000000000000000000020 /* CandyGlobeView.swift */,
@@ -245,6 +248,7 @@
 				A10000000000000000000016 /* CandyReliableTransfer.swift in Sources */,
 				A10000000000000000000014 /* CandyPlazaView.swift in Sources */,
 				A10000000000000000000019 /* CandyPreviewPlayer.swift in Sources */,
+				A1000000000000000000001A /* LibraryView.swift in Sources */,
 				A10000000000000000000018 /* CandyGlobeView.swift in Sources */,
 				A10000000000000000000017 /* CandyEarthLand.swift in Sources */,
 			);
