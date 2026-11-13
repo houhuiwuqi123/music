@@ -119,6 +119,8 @@ struct LibraryView: View {
             case .recognize: EmptyView()
             }
         }
+        // Gap between the top bar and the section's content.
+        .padding(.top, 16)
         .gesture(
             // Edge swipe right goes back, like a navigation pop.
             DragGesture(minimumDistance: 20).onEnded { value in

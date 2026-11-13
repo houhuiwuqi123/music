@@ -238,7 +238,8 @@ struct RootView: View {
         }
     }
 
-    /// Floating bar: Home / Plaza / Library in one bordered capsule, Setting as its own circle.
+    /// Home / Plaza / Library in one bordered capsule, Setting as its own circle on the right.
+    /// No fill, so the page background shows through; same gap above and below the border.
     private var tabBar: some View {
         HStack(spacing: 12) {
             HStack(spacing: 0) {
@@ -247,7 +248,6 @@ struct RootView: View {
                 }
             }
             .padding(4)
-            .background(Capsule().fill(Color(red: 0.06, green: 0.065, blue: 0.1).opacity(0.94)))
             .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 1))
 
             Button { select(.settings) } label: {
@@ -257,7 +257,6 @@ struct RootView: View {
                     .frame(width: 54, height: 54)
                     .background(Circle().fill(.white.opacity(selectedTab == .settings ? 0.12 : 0)))
                     .padding(4)
-                    .background(Circle().fill(Color(red: 0.06, green: 0.065, blue: 0.1).opacity(0.94)))
                     .overlay(Circle().stroke(.white.opacity(0.14), lineWidth: 1))
                     .contentShape(Circle())
             }
@@ -265,7 +264,7 @@ struct RootView: View {
             .accessibilityLabel(settings.text("settings"))
         }
         .padding(.horizontal, 16)
-        .padding(.top, 4)
+        .padding(.vertical, 8)
     }
 
     private func tabButton(_ tab: Tab) -> some View {
