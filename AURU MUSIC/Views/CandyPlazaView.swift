@@ -178,9 +178,9 @@ struct CandyPlazaView: View {
         return ZStack {
             // Soft rim glow behind the sphere, as in the reference artwork.
             Circle()
-                .fill(dark ? Color.purple.opacity(0.08) : Color.purple.opacity(0.06))
+                .fill(dark ? Color.white.opacity(0.06) : Color(red: 1, green: 0.98, blue: 0.9))
                 .padding(18)
-                .shadow(color: Color.purple.opacity(dark ? 0.22 : 0.3), radius: 22)
+                .shadow(color: dark ? Color.white.opacity(0.12) : Color(red: 1, green: 0.93, blue: 0.7).opacity(0.9), radius: 22)
             CandyGlobeView(markers: places, selectedID: selectedPlace, dark: dark, zoom: zoom,
                            onZoom: { zoom = $0 }) { id in
                 withAnimation(.easeInOut(duration: 0.2)) { selectedPlace = id }

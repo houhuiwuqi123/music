@@ -81,16 +81,16 @@ struct RootView: View {
                     SettingsView(showsDone: false).tag(Tab.settings).toolbar(.hidden, for: .tabBar)
                 }
                 .tint(.purple)
-                // The tab bar floats over the page with a clear background.
                 .overlay(alignment: .bottom) {
-                    VStack(spacing: 6) {
-                        if player.hasCurrentMedia {
-                            MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
-                        }
-                        tabBar
+                    if player.hasCurrentMedia {
+                        MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
+                            .padding(.bottom, 6)
+                            .zIndex(100)
                     }
-                    .zIndex(100)
                 }
+
+                // Sits below the pages on the app background, like the body.
+                tabBar
             }
             .padding(.top, 8)
 
@@ -240,7 +240,7 @@ struct RootView: View {
     }
 
     /// Home / Plaza / Library in one bordered capsule, Setting as its own circle on the right.
-    /// No fill, so the page shows through; 8pt between the buttons and the border all round.
+    /// No fill, so the app background shows; 8pt between the buttons and the border all round.
     private var tabBar: some View {
         HStack(spacing: 12) {
             HStack(spacing: 0) {
@@ -265,7 +265,7 @@ struct RootView: View {
             .accessibilityLabel(settings.text("settings"))
         }
         .padding(.horizontal, 16)
-        .padding(.bottom, 4)
+        .padding(.top, 4)
     }
 
     private func tabButton(_ tab: Tab) -> some View {
