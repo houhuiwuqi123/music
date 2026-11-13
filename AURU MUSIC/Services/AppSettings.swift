@@ -36,7 +36,7 @@ final class AppSettings: ObservableObject {
             "library": ("资料库", "Library"), "librarySongs": ("歌曲", "Songs"),
             "playlists": ("歌单", "Playlists"), "search": ("搜索歌曲、艺人、歌单", "Search songs, artists, playlists"),
             "recent": ("最近播放", "Recently Played"), "top": ("播放排行", "Top Played"),
-            "allSongs": ("全部歌曲", "All Songs"), "settings": ("设置", "Settings"),
+            "allSongs": ("全部歌曲", "All Songs"), "settings": ("设置", "Setting"),
             "language": ("语言", "Language"), "notifications": ("通知", "Notifications"),
             "about": ("关于", "About"), "version": ("版本", "Version"), "policy": ("隐私政策", "Privacy Policy"),
             "support": ("支持", "Support"), "import": ("导入本地音乐", "Import Local Music"),
