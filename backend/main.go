@@ -120,6 +120,23 @@ func routes(n *node.Node, ice func(string) []node.ICEServer, region func(*http.R
 	mux.HandleFunc("GET /api/plaza", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"entries": n.Plaza.Entries()})
 	})
+	// Browsers also post their signed announcement here. GossipSub from a browser is best effort
+	// (some browsers never get a working pubsub stream to the node and publish to no one), and it
+	// gives no feedback; this path stores + gossips the envelope and returns the exact rejection.
+	mux.HandleFunc("POST /api/announce", func(w http.ResponseWriter, r *http.Request) {
+		var env node.Envelope
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&env); err != nil {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid envelope"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		if _, err := n.PublishEnvelope(ctx, env); err != nil && !node.IsStale(err) {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "time": time.Now().UnixMilli()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "time": time.Now().UnixMilli()})
+	})
 	if webDir != "" {
 		files := http.FileServer(http.Dir(webDir))
 		mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
@@ -132,10 +149,13 @@ func routes(n *node.Node, ice func(string) []node.ICEServer, region func(*http.R
 	return mux
 }
 
-func writeJSON(w http.ResponseWriter, value any) {
+func writeJSON(w http.ResponseWriter, value any) { writeJSONStatus(w, http.StatusOK, value) }
+
+func writeJSONStatus(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
 

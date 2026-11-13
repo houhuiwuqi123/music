@@ -389,6 +389,38 @@ export class PlazaNetwork {
     return result.slice(0, 8)
   }
 
+  /**
+   * Sends the signed announcement straight to the node over HTTP. Browser GossipSub is best
+   * effort and silent: in some browsers it never reaches the node, so the user stays invisible.
+   * The node validates, stores and gossips it, and says why when it refuses.
+   */
+  private async postAnnouncement(text: string, retried = false) {
+    let res: Response
+    try {
+      // text/plain keeps it a "simple" request: no CORS preflight when the node is cross-origin.
+      res = await fetch(`${this.nodeURL}/api/announce`, { method: 'POST', body: text,
+        headers: { 'Content-Type': 'text/plain' }, signal: AbortSignal.timeout(10_000) })
+    } catch {
+      return // offline or blocked: gossip and the next heartbeat still try
+    }
+    if (res.status === 404 || res.status === 405) return // older node without this endpoint
+    const reply = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; time?: number }
+    if (res.ok) {
+      this.state.notice = ''
+      return
+    }
+    const error = reply.error ?? `HTTP ${res.status}`
+    if (error.includes('clock') && typeof reply.time === 'number' && !retried) {
+      this.clockOffset = reply.time - Date.now()
+      const env = JSON.parse(text) as Envelope
+      const body = JSON.parse(env.body) as PlazaBody
+      body.seq = this.nextSeq()
+      if (this.key) await this.postAnnouncement(JSON.stringify(await signEnvelope(this.key, body)), true)
+      return
+    }
+    this.state.notice = `节点拒收了你的广场公告：${error}`
+  }
+
   /** Unix ms on the server's clock, strictly increasing. */
   private nextSeq(): number {
     this.lastSeq = Math.max(this.lastSeq + 1, Math.round(Date.now() + this.clockOffset))
@@ -406,7 +438,15 @@ export class PlazaNetwork {
       client: 'web', via: this.via(), files: bye ? [] : files, seq: this.nextSeq(), bye: bye || undefined }
     try {
       const env = await signEnvelope(this.key, body)
-      await this.libp2p.services.pubsub.publish(PLAZA_TOPIC, encoder.encode(JSON.stringify(env)))
+      const text = JSON.stringify(env)
+      if (bye) {
+        // The page is going away: sendBeacon survives unload, fetch may not.
+        navigator.sendBeacon?.(`${this.nodeURL}/api/announce`, new Blob([text], { type: 'text/plain' }))
+      } else {
+        await this.postAnnouncement(text)
+      }
+      // Gossip as well (other nodes, older servers without /api/announce); a duplicate is ignored.
+      await this.libp2p.services.pubsub.publish(PLAZA_TOPIC, encoder.encode(text))
       if (!bye) this.scheduleCheck(body.seq, files.map((f) => f.cid).sort().join())
     } catch (error) {
       console.warn('announce failed', error)

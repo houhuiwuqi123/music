@@ -67,6 +67,9 @@ var (
 	errStale = errors.New("stale announcement")
 )
 
+// IsStale reports an announcement that is not newer than the stored one (e.g. a duplicate).
+func IsStale(err error) bool { return errors.Is(err, errStale) }
+
 // VerifyEnvelope checks the signature, the key-to-peer binding and the field limits.
 func VerifyEnvelope(env Envelope, now time.Time) (*PlazaBody, error) {
 	if len(env.Body) > 96<<10 {

@@ -304,3 +304,43 @@ func waitFor(t *testing.T, check func() bool, what string) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// A browser posts its signed announcement over HTTP; the node stores it, treats a resend as
+// success, and returns the validation error for a bad one.
+func TestHTTPAnnounce(t *testing.T) {
+	n, srv := startNode(t)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	pub, _ := crypto.UnmarshalEd25519PublicKey(key.Public().(ed25519.PublicKey))
+	id, _ := peer.IDFromPublicKey(pub)
+	body := node.PlazaBody{V: 1, PeerID: id.String(), Name: "网页", Client: "web", Via: n.Addrs()[:1],
+		Files: []node.PlazaFile{sampleFile("hello")}, Seq: time.Now().UnixMilli()}
+	post := func(env node.Envelope) (int, map[string]any) {
+		data, _ := json.Marshal(env)
+		resp, err := http.Post(srv.URL+"/api/announce", "text/plain", strings.NewReader(string(data)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	env := envelope(key, body)
+	if code, out := post(env); code != 200 || out["ok"] != true {
+		t.Fatalf("announce: %d %v", code, out)
+	}
+	if code, _ := post(env); code != 200 {
+		t.Fatalf("resend should be accepted as stale, got %d", code)
+	}
+	found := false
+	for _, e := range n.Plaza.Entries() {
+		found = found || (e.PeerID == id.String() && len(e.Files) == 1)
+	}
+	if !found {
+		t.Fatal("announcement not stored")
+	}
+	body.Seq = time.Now().Add(time.Hour).UnixMilli()
+	if code, out := post(envelope(key, body)); code != 400 || !strings.Contains(out["error"].(string), "clock") {
+		t.Fatalf("future seq: %d %v", code, out)
+	}
+}
