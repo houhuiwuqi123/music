@@ -22,8 +22,22 @@ struct RootView: View {
         /// numbers; inside Library nothing posts these, and LibraryView handles reselect.
         static let legacySongs = -1, legacyArtists = -2, legacyPlaylists = -4
 
-        /// Library and Settings draw their own large-title headers.
-        var showsTopBar: Bool { self == .home || self == .plaza }
+        /// Settings draws its own large navigation title.
+        var showsTopBar: Bool { self != .settings }
+        /// Plaza has its own user search, so it gets no search button.
+        var hasSearch: Bool { self == .home || self == .library }
+        var hasImport: Bool { self != .settings }
+
+        var icon: String {
+            switch self {
+            case .home: return "house.fill"
+            case .plaza: return "sparkles"
+            case .library:
+                if #available(iOS 17.0, *) { return "music.note.square.stack.fill" }
+                return "square.stack.fill"
+            case .settings: return "gearshape.fill"
+            }
+        }
     }
 
     @EnvironmentObject private var library: LocalMusicLibrary
@@ -35,8 +49,11 @@ struct RootView: View {
 
     @State private var selectedTab: Tab = .home
     @State private var searchText = ""
+    /// The search bar stays hidden until the search button is tapped.
+    @State private var showsSearch = false
+    @FocusState private var searchFocused: Bool
+    @State private var librarySection: LibraryView.Entry?
     @State private var showsImporter = false
-    @State private var showsRecognition = false
     @State private var showsNowPlaying = false
     @State private var selectedArtist: Artist?
     @State private var selectedPlaylist: Playlist?
@@ -48,35 +65,37 @@ struct RootView: View {
             VStack(spacing: 10) {
                 if selectedTab.showsTopBar {
                     topBar
-                    searchBar
+                    if showsSearch && selectedTab.hasSearch {
+                        searchBar
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
 
+                // The system tab bar is hidden; `tabBar` below replaces it.
                 TabView(selection: $selectedTab) {
-                    HomeView().tag(Tab.home).tabItem { Label(settings.text("home"), systemImage: "house.fill") }
-                    CandyPlazaView().tag(Tab.plaza).tabItem { Label(settings.text("plaza"), systemImage: "sparkles") }
-                    LibraryView(tabIndex: Tab.library.index, onImport: { showsImporter = true })
+                    HomeView().tag(Tab.home).toolbar(.hidden, for: .tabBar)
+                    CandyPlazaView().tag(Tab.plaza).toolbar(.hidden, for: .tabBar)
+                    LibraryView(section: $librarySection, tabIndex: Tab.library.index)
                         .tag(Tab.library)
-                        .tabItem { Label(settings.text("library"), systemImage: "music.note.house.fill") }
-                    SettingsView(showsDone: false).tag(Tab.settings)
-                        .tabItem { Label(settings.text("settings"), systemImage: "gearshape.fill") }
+                        .toolbar(.hidden, for: .tabBar)
+                    SettingsView(showsDone: false).tag(Tab.settings).toolbar(.hidden, for: .tabBar)
                 }
                 .tint(.purple)
-                .toolbarBackground(Color(red: 0.025, green: 0.03, blue: 0.055), for: .tabBar)
-                .toolbarBackground(.visible, for: .tabBar)
-                .background(TabReselectDetector())
                 .overlay(alignment: .bottom) {
                     if player.hasCurrentMedia {
                         MiniPlayerView(player: player, onExpand: { showsNowPlaying = true })
-                            .padding(.bottom, 49 + 3)
+                            .padding(.bottom, 6)
                             .zIndex(100)
                     }
                 }
+
+                tabBar
             }
             .padding(.top, 8)
 
-            if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if showsSearch && selectedTab.hasSearch && !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 searchResults
-                    .padding(.top, 116)
+                    .padding(.top, 124)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(5)
             }
@@ -101,7 +120,6 @@ struct RootView: View {
             allowsMultipleSelection: true,
             onCompletion: handleFileImport
         )
-        .fullScreenCover(isPresented: $showsRecognition) { SongRecognitionView() }
         .sheet(item: $selectedArtist) { artist in
             NavigationStack { ArtistDetailView(artist: artist) }
         }
@@ -156,39 +174,128 @@ struct RootView: View {
         }
         .onChange(of: selectedTab) { tab in
             searchText = ""
+            showsSearch = false
             NotificationCenter.default.post(name: .auruTabSelected, object: tab.index)
         }
         .onReceive(NotificationCenter.default.publisher(for: .auruTabReselected)) { _ in
             searchText = ""
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: searchText)
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: showsSearch)
     }
 
     private var topBar: some View {
         HStack(spacing: 10) {
-            // Keeps the title centred against the two buttons on the right.
-            Color.clear.frame(width: 94, height: 42)
-            Spacer()
-            VStack(spacing: 1) {
-                Text("AURU MUSIC")
-                    .font(.caption.weight(.black)).tracking(2)
-                    .foregroundStyle(.purple)
+            if selectedTab == .library, let section = librarySection {
+                Button { librarySection = nil } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 42, height: 42)
+                        .background(.thinMaterial, in: Circle())
+                }
+                .accessibilityLabel(settings.text("library"))
+                Text(settings.text(section.titleKey))
+                    .font(.system(size: 28, weight: .bold))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .fixedSize(horizontal: true, vertical: false)
-                Text(currentTitle).font(.headline)
+                    .minimumScaleFactor(0.6)
+            } else {
+                Text(currentTitle)
+                    .font(.system(size: 34, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
             }
             Spacer()
-            Button { showsRecognition = true } label: {
-                Image(systemName: "shazam.logo").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
+            if selectedTab.hasSearch {
+                Button(action: toggleSearch) {
+                    Image(systemName: showsSearch ? "xmark" : "magnifyingglass")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 42, height: 42)
+                        .background(.thinMaterial, in: Circle())
+                }
+                .accessibilityLabel(settings.text("search"))
             }
-            Button { showsImporter = true } label: {
-                Image(systemName: "square.and.arrow.down.fill").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
+            if selectedTab.hasImport {
+                Button { showsImporter = true } label: {
+                    Image(systemName: "square.and.arrow.down.fill").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
+                }
+                .disabled(library.isImporting)
+                .accessibilityLabel(settings.text("import"))
             }
-            .disabled(library.isImporting)
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 17)
+        .frame(height: 46)
+        .padding(.leading, 20)
+        .padding(.trailing, 17)
+    }
+
+    private func toggleSearch() {
+        showsSearch.toggle()
+        if showsSearch {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { searchFocused = true }
+        } else {
+            searchText = ""
+            searchFocused = false
+        }
+    }
+
+    /// Floating bar: Home / Plaza / Library in one bordered capsule, Setting as its own circle.
+    private var tabBar: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 0) {
+                ForEach([Tab.home, .plaza, .library], id: \.self) { tab in
+                    tabButton(tab)
+                }
+            }
+            .padding(4)
+            .background(Capsule().fill(Color(red: 0.06, green: 0.065, blue: 0.1).opacity(0.94)))
+            .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 1))
+
+            Button { select(.settings) } label: {
+                Image(systemName: Tab.settings.icon)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(selectedTab == .settings ? Color.purple : .white)
+                    .frame(width: 54, height: 54)
+                    .background(Circle().fill(.white.opacity(selectedTab == .settings ? 0.12 : 0)))
+                    .padding(4)
+                    .background(Circle().fill(Color(red: 0.06, green: 0.065, blue: 0.1).opacity(0.94)))
+                    .overlay(Circle().stroke(.white.opacity(0.14), lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(settings.text("settings"))
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+    }
+
+    private func tabButton(_ tab: Tab) -> some View {
+        let selected = selectedTab == tab
+        return Button { select(tab) } label: {
+            VStack(spacing: 3) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: 20, weight: .semibold))
+                    .frame(height: 24)
+                Text(title(of: tab))
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(selected ? Color.purple : .white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 54)
+            .background(Capsule().fill(.white.opacity(selected ? 0.12 : 0)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// Tapping the current tab again posts a reselect, which sends the page back to its top.
+    private func select(_ tab: Tab) {
+        if selectedTab == tab {
+            NotificationCenter.default.post(name: .auruTabReselected, object: tab.index)
+        } else {
+            selectedTab = tab
+        }
     }
 
     private var searchBar: some View {
@@ -196,6 +303,7 @@ struct RootView: View {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField(settings.text("search"), text: $searchText)
                 .textInputAutocapitalization(.never)
+                .focused($searchFocused)
             if !searchText.isEmpty {
                 Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
             }
@@ -249,8 +357,10 @@ struct RootView: View {
         .padding(.horizontal, 16)
     }
 
-    private var currentTitle: String {
-        switch selectedTab {
+    private var currentTitle: String { title(of: selectedTab) }
+
+    private func title(of tab: Tab) -> String {
+        switch tab {
         case .home: return settings.text("home")
         case .plaza: return settings.text("plaza")
         case .library: return settings.text("library")
@@ -281,34 +391,4 @@ struct RootView: View {
 extension Notification.Name {
     static let auruTabSelected = Notification.Name("AURUMusicTabSelected")
     static let auruTabReselected = Notification.Name("AURUMusicTabReselected")
-}
-
-private struct TabReselectDetector: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> DetectorViewController {
-        DetectorViewController()
-    }
-
-    func updateUIViewController(_ uiViewController: DetectorViewController, context: Context) {}
-
-    final class DetectorViewController: UIViewController, UITabBarControllerDelegate {
-        private weak var previousDelegate: UITabBarControllerDelegate?
-        private var lastIndex: Int?
-
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            guard let controller = tabBarController, controller.delegate !== self else { return }
-            previousDelegate = controller.delegate
-            lastIndex = controller.selectedIndex
-            controller.delegate = self
-        }
-
-        func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
-            let index = tabBarController.selectedIndex
-            if lastIndex == index {
-                NotificationCenter.default.post(name: .auruTabReselected, object: index)
-            }
-            lastIndex = index
-            previousDelegate?.tabBarController?(tabBarController, didSelect: viewController)
-        }
-    }
 }

@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// The Library tab: a large title over a list of sections (Playlists, Artists, Songs,
-/// Recognize Music). Picking a section swaps in that screen with a back header. The
-/// section screens keep their own NavigationStacks, so they are shown in place rather
-/// than pushed onto another stack.
+/// The Library tab: a plain list of sections (Playlists, Artists, Songs, Recognize Music).
+/// The page title, back button and import button live in RootView's top bar, which reads
+/// `section`. The section screens keep their own NavigationStacks, so they are shown in
+/// place rather than pushed onto another stack.
 struct LibraryView: View {
     enum Entry: Hashable, CaseIterable {
         case playlists, artists, songs, recognize
@@ -28,12 +28,11 @@ struct LibraryView: View {
     }
 
     @EnvironmentObject private var settings: AppSettings
-    @EnvironmentObject private var library: LocalMusicLibrary
+    /// The open section, nil for the list. Owned by RootView so its top bar can show a back button.
+    @Binding var section: Entry?
     /// Index this tab has in the tab bar; reselecting it returns to the list.
     let tabIndex: Int
-    let onImport: () -> Void
 
-    @State private var section: Entry?
     @State private var showsRecognition = false
 
     var body: some View {
@@ -56,81 +55,47 @@ struct LibraryView: View {
 
     // MARK: List
 
+    /// Laid out like the iOS Music library list: no card, icon column on the left, and a
+    /// hairline under each row that starts at the text and runs to the right edge.
     private var list: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                    .padding(.bottom, 18)
-                // One glass card holding the rows, like the app's other grouped content.
-                VStack(spacing: 0) {
-                    ForEach(Entry.allCases, id: \.self) { item in
-                        Button { open(item) } label: { row(item, last: item == Entry.allCases.last) }
-                            .buttonStyle(LibraryRowStyle())
-                    }
+            VStack(spacing: 0) {
+                ForEach(Entry.allCases, id: \.self) { item in
+                    Button { open(item) } label: { row(item) }
+                        .buttonStyle(LibraryRowStyle())
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .glassCard(cornerRadius: 22)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
+            .padding(.top, 2)
             .padding(.bottom, 140)
         }
         .scrollIndicators(.hidden)
-        .background(DarkBackground())
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                // Same brand line as the top bar on Home and Plaza.
-                Text("AURU MUSIC")
-                    .font(.caption.weight(.black)).tracking(2)
-                    .foregroundStyle(.purple)
-                Text(settings.text("library"))
-                    .font(.system(size: 34, weight: .heavy))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            Spacer()
-            Button(action: onImport) {
-                Image(systemName: "plus")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 42, height: 42)
-                    .background(.thinMaterial, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .disabled(library.isImporting)
-            .accessibilityLabel(settings.text("import"))
-        }
-    }
-
-    private func row(_ item: Entry, last: Bool) -> some View {
+    private func row(_ item: Entry) -> some View {
         HStack(spacing: 16) {
             Image(systemName: item.icon)
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: 24, weight: .regular))
                 .foregroundStyle(.purple)
-                .frame(width: 30)
+                .frame(width: 34)
             VStack(spacing: 0) {
                 HStack {
                     Text(settings.text(item.titleKey))
-                        .font(.title3.weight(.semibold))
+                        .font(.system(size: 20))
                         .foregroundStyle(.white)
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.35))
+                        .padding(.trailing, 6)
                 }
-                .frame(height: 60)
-                // Separator starts under the text, as in iOS list rows.
-                if !last {
-                    Rectangle()
-                        .fill(.white.opacity(0.11))
-                        .frame(height: 0.5)
-                }
+                .frame(height: 52)
+                Rectangle()
+                    .fill(.white.opacity(0.16))
+                    .frame(height: 0.5)
             }
         }
         .padding(.leading, 18)
-        .padding(.trailing, 16)
+        .padding(.trailing, 14)
         .contentShape(Rectangle())
     }
 
@@ -144,33 +109,9 @@ struct LibraryView: View {
 
     // MARK: Detail
 
+    @ViewBuilder
     private func detail(_ item: Entry) -> some View {
-        VStack(spacing: 6) {
-            // Same look as the top bar on Home and Plaza: round glass button, brand line + title.
-            HStack(spacing: 10) {
-                Button {
-                    section = nil
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 42, height: 42)
-                        .background(.thinMaterial, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(settings.text("library"))
-                Spacer()
-                VStack(spacing: 1) {
-                    Text("AURU MUSIC")
-                        .font(.caption.weight(.black)).tracking(2)
-                        .foregroundStyle(.purple)
-                    Text(settings.text(item.titleKey)).font(.headline)
-                }
-                Spacer()
-                // Balances the back button so the title stays centred.
-                Color.clear.frame(width: 42, height: 42)
-            }
-            .padding(.horizontal, 17)
-
+        Group {
             switch item {
             case .playlists: PlaylistsView()
             case .artists: ArtistsView()
@@ -178,7 +119,6 @@ struct LibraryView: View {
             case .recognize: EmptyView()
             }
         }
-        .background(DarkBackground())
         .gesture(
             // Edge swipe right goes back, like a navigation pop.
             DragGesture(minimumDistance: 20).onEnded { value in
