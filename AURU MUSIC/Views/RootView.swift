@@ -195,12 +195,12 @@ struct RootView: View {
                 }
                 .accessibilityLabel(settings.text("library"))
                 Text(settings.text(section.titleKey))
-                    .font(.system(size: 28, weight: .bold))
+                    .font(.system(size: 22, weight: .bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
             } else {
                 Text(currentTitle)
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.system(size: 24, weight: .bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
             }

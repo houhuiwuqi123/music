@@ -135,13 +135,6 @@ struct CandyPlazaView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("🍬")
-                .font(.system(size: 27))
-            Text("Candy广场")
-                .font(.title3.weight(.heavy))
-                .foregroundStyle(
-                    LinearGradient(colors: [.pink, .purple, .orange], startPoint: .leading, endPoint: .trailing)
-                )
             Spacer()
             Button { showsProfile = true } label: {
                 Image(systemName: "person.crop.circle")
@@ -495,6 +488,7 @@ private struct CandyListenerRow: View {
             CandyListenButton(
                 preview: preview,
                 fileID: listener.file?.id,
+                isSong: listener.file.map { CandyListenButton.isSong($0.name) } ?? true,
                 enabled: listener.file != nil && (!listener.isOffline || isDownloaded),
                 listen: listen
             )
@@ -540,8 +534,16 @@ private struct CandyListenerRow: View {
 private struct CandyListenButton: View {
     @ObservedObject var preview: CandyPreviewPlayer
     let fileID: String?
+    /// False for files that are not audio (video, documents…): the button is greyed out.
+    let isSong: Bool
     let enabled: Bool
     let listen: () -> Void
+
+    static func isSong(_ name: String) -> Bool {
+        LocalMusicLibrary.supportedAudioExtensions.contains(URL(fileURLWithPath: name).pathExtension.lowercased())
+    }
+
+    private var usable: Bool { isSong && (enabled || isCurrent) }
 
     private var isCurrent: Bool { fileID != nil && preview.file?.id == fileID }
 
@@ -561,7 +563,7 @@ private struct CandyListenButton: View {
                 if isCurrent && isFailed {
                     Image(systemName: "exclamationmark.triangle.fill")
                 } else if isCurrent && preview.phase == .buffering {
-                    ProgressView().controlSize(.mini).tint(.pink)
+                    ProgressView().controlSize(.mini).tint(.purple)
                 } else if isCurrent {
                     CandyEqualizer(animating: preview.phase == .playing)
                 } else {
@@ -569,14 +571,14 @@ private struct CandyListenButton: View {
                 }
             }
             .font(.caption.weight(.bold))
-            .foregroundStyle(isCurrent ? Color.pink : Color.primary)
+            .foregroundStyle(!usable ? Color.white.opacity(0.3) : (isCurrent ? Color.purple : Color.primary))
             .frame(minWidth: isCurrent ? CGFloat(44) : nil, minHeight: CGFloat(16))
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background((isCurrent ? Color.pink : Color.purple).opacity(0.16), in: Capsule())
+            .background(usable ? Color.purple.opacity(isCurrent ? 0.24 : 0.16) : Color.white.opacity(0.06), in: Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(!enabled && !isCurrent)
+        .disabled(!usable)
         .animation(.easeInOut(duration: 0.2), value: isCurrent)
         .accessibilityLabel(isCurrent ? (preview.phase == .playing ? "暂停试听" : "继续试听") : "听听看")
         .onChange(of: preview.phase) { phase in
