@@ -36,6 +36,14 @@ final class LocalMusicLibrary: ObservableObject {
         deduplicateTracks()
     }
 
+    /// Songs received from the plaza (Documents/Candy Downloads) stay out of the library until the
+    /// user taps 导入 in the receive list, which copies them in.
+    static let plazaDownloadsFolder = "Candy Downloads"
+
+    static func isPlazaDownload(_ url: URL) -> Bool {
+        url.standardizedFileURL.pathComponents.contains(plazaDownloadsFolder)
+    }
+
     func refreshDocuments() async {
         importError = nil
         do {
@@ -50,6 +58,7 @@ final class LocalMusicLibrary: ObservableObject {
             .filter {
                 (Self.isSupported($0) || Self.isLyrics($0))
                     && !hiddenTrackPaths.contains($0.standardizedFileURL.path)
+                    && !Self.isPlazaDownload($0)
             } ?? []
 
             let uniqueURLs = Dictionary(grouping: discovered, by: { $0.standardizedFileURL.path })
@@ -72,8 +81,8 @@ final class LocalMusicLibrary: ObservableObject {
                     failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
                 }
             }
-            tracks.removeAll { !fileManager.fileExists(atPath: $0.fileURL.path) }
-            videos.removeAll { !fileManager.fileExists(atPath: $0.fileURL.path) }
+            tracks.removeAll { !fileManager.fileExists(atPath: $0.fileURL.path) || Self.isPlazaDownload($0.fileURL) }
+            videos.removeAll { !fileManager.fileExists(atPath: $0.fileURL.path) || Self.isPlazaDownload($0.fileURL) }
             for url in uniqueURLs.filter({ Self.isLyrics($0) }) {
                 do {
                     guard let track = try matchingLyricsTrack(for: url),

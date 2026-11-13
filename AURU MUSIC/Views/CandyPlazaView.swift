@@ -51,8 +51,37 @@ struct CandyPlazaView: View {
             }
             places[key] = marker
         }
-        return places.values.sorted { $0.id < $1.id }
+        return places.values.sorted { $0.id < $1.id }.flatMap(spread)
     }
+
+    /// Zoomed in, a place with several users (e.g. one city) fans out into one marker per user on
+    /// a small ring, so each avatar, name and song can be seen. The ring keeps roughly the same size
+    /// on screen at every zoom level (degrees shrink as the globe grows).
+    private func spread(_ place: CandyGlobeMarker) -> [CandyGlobeMarker] {
+        let people = visibleListeners.filter { Self.placeKey($0) == place.id }
+        guard zoom >= Self.spreadZoom, people.count > 1, people.count <= 12 else { return [place] }
+        let radius = (12.0 + 2.5 * Double(people.count)) / zoom // degrees of latitude
+        let stretch = 1 / max(0.2, cos(place.latitude * .pi / 180)) // keep the ring round off the equator
+        let ordered = people.sorted { lhs, rhs in
+            if lhs.isOffline != rhs.isOffline { return !lhs.isOffline }
+            return lhs.clientId < rhs.clientId
+        }
+        return ordered.enumerated().map { index, listener in
+            let angle = -Double.pi / 2 + 2 * Double.pi * Double(index) / Double(ordered.count)
+            var marker = CandyGlobeMarker(id: "\(place.id)#\(listener.clientId)",
+                latitude: place.latitude - radius * sin(angle),
+                longitude: place.longitude + radius * cos(angle) * stretch,
+                online: !listener.isOffline, count: 1)
+            marker.playing = !listener.isOffline && listener.isPlaying
+            marker.name = listener.ownerName
+            marker.song = listener.artist.isEmpty ? listener.title : "\(listener.title) · \(listener.artist)"
+            marker.avatar = listener.avatar
+            return marker
+        }
+    }
+
+    /// Same zoom at which callouts switch to the detailed bubble.
+    private static let spreadZoom: Double = 1.8
 
     private var listedListeners: [CandyPlazaListening] {
         guard let selectedPlace else { return visibleListeners }
@@ -100,7 +129,8 @@ struct CandyPlazaView: View {
             if playing { plaza.preview.pause() }
         }
         .onChange(of: markers.map(\.id)) { ids in
-            if let selectedPlace, !ids.contains(selectedPlace) { self.selectedPlace = nil }
+            let places = Set(ids.map { $0.split(separator: "#").first.map(String.init) ?? $0 })
+            if let selectedPlace, !places.contains(selectedPlace) { self.selectedPlace = nil }
         }
         .sheet(isPresented: $showsProfile) { CandyProfileView() }
         .confirmationDialog(
@@ -183,7 +213,8 @@ struct CandyPlazaView: View {
                 .shadow(color: dark ? Color.white.opacity(0.12) : Color(red: 1, green: 0.93, blue: 0.7).opacity(0.9), radius: 22)
             CandyGlobeView(markers: places, selectedID: selectedPlace, dark: dark, zoom: zoom,
                            onZoom: { zoom = $0 }) { id in
-                withAnimation(.easeInOut(duration: 0.2)) { selectedPlace = id }
+                // A fanned-out user marker selects its whole place.
+                withAnimation(.easeInOut(duration: 0.2)) { selectedPlace = id.map { $0.split(separator: "#").first.map(String.init) ?? $0 } }
             }
             .padding(18)
             zoomControls

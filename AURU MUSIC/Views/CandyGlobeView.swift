@@ -154,7 +154,8 @@ struct CandyGlobeView: UIViewRepresentable {
                 markerNodes = [:]
                 markers = []
             }
-            if newSelection != selectedID, let id = newSelection, let marker = newMarkers.first(where: { $0.id == id }) {
+            if newSelection != selectedID, let id = newSelection,
+               let marker = newMarkers.first(where: { Self.marker($0.id, belongsTo: id) }) {
                 focus(latitude: marker.latitude, longitude: marker.longitude)
                 // Pull in close enough to tell neighbouring places apart.
                 if zoomTarget < 2.5 {
@@ -171,6 +172,16 @@ struct CandyGlobeView: UIViewRepresentable {
 
         // MARK: Markers
 
+        /// A place's users can be drawn as separate markers with ids "<place>#<user>"; selecting
+        /// the place selects all of them.
+        static func marker(_ id: String, belongsTo selection: String) -> Bool {
+            id == selection || id.hasPrefix(selection + "#")
+        }
+
+        private func isSelected(_ id: String) -> Bool {
+            selectedID.map { Self.marker(id, belongsTo: $0) } ?? false
+        }
+
         private func rebuildMarkers() {
             let wanted = Set(markers.map(\.id))
             for (id, node) in markerNodes where !wanted.contains(id) {
@@ -179,7 +190,7 @@ struct CandyGlobeView: UIViewRepresentable {
             }
             for marker in markers {
                 markerNodes[marker.id]?.removeFromParentNode()
-                let node = makeMarker(marker, selected: marker.id == selectedID)
+                let node = makeMarker(marker, selected: isSelected(marker.id))
                 markerRoot.addChildNode(node)
                 markerNodes[marker.id] = node
             }
@@ -200,7 +211,7 @@ struct CandyGlobeView: UIViewRepresentable {
                     view.addSubview(callout)
                     callouts[id] = callout
                 }
-                callout.configure(marker, selected: id == selectedID, dark: dark ?? false)
+                callout.configure(marker, selected: isSelected(id), dark: dark ?? false)
             }
             layoutCallouts()
         }
@@ -217,13 +228,13 @@ struct CandyGlobeView: UIViewRepresentable {
                 // The camera looks down -Z, so the near hemisphere has z > 0.
                 let alpha = CGFloat(max(0, min(1, (world.z - 0.15) / 0.25)))
                 callout.isHidden = alpha <= 0.01
-                callout.setExpanded(detailed || id == selectedID)
+                callout.setExpanded(detailed || isSelected(id))
                 guard !callout.isHidden else { continue }
                 let p = view.projectPoint(world)
                 let size = callout.bounds.size
                 callout.center = CGPoint(x: CGFloat(p.x), y: CGFloat(p.y) - size.height / 2 - 9)
                 callout.alpha = alpha
-                if id == selectedID { view.bringSubviewToFront(callout) }
+                if isSelected(id) { view.bringSubviewToFront(callout) }
             }
         }
 

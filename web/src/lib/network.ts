@@ -94,6 +94,16 @@ function gathered(pc: RTCPeerConnection, ms = 5000): Promise<void> {
 const sleep = (ms: number, wake?: { promise: Promise<void> }) =>
   Promise.race([new Promise<void>((r) => setTimeout(r, ms)), wake?.promise ?? new Promise<void>(() => undefined)])
 
+const NICK_FIRST = ['快乐', '橘子', '薄荷', '柠檬', '星星', '月光', '晚风', '云朵', '海盐', '蜜桃', '汽水', '森林',
+  '夏天', '雨后', '彩虹', '咖啡', '奶茶', '向日葵', '小鹿', '鲸鱼', '白桃', '芒果', '樱桃', '银河']
+const NICK_LAST = ['男孩', '女孩', '君', '酱', '同学', '少年', '旅人', '小姐', '先生', '星人', '饭团', '宝宝']
+
+/** A friendly default name such as 快乐男孩 or 橘子君, until the user sets one. */
+export function randomNickname(): string {
+  const pick = (list: string[]) => list[Math.floor(Math.random() * list.length)]
+  return pick(NICK_FIRST) + pick(NICK_LAST)
+}
+
 export class PlazaNetwork {
   state = reactive({
     status: 'offline' as 'connecting' | 'online' | 'offline',
@@ -140,9 +150,14 @@ export class PlazaNetwork {
 
   constructor(options: { nodeURL?: string } = {}) {
     this.nodeURL = options.nodeURL ?? defaultNodeURL
-    this.state.name = (() => {
+    const saved = (() => {
       try { return localStorage.getItem('auru-name') ?? '' } catch { return '' }
-    })() || `网页访客${Math.floor(1000 + Math.random() * 9000)}`
+    })()
+    // Old automatic names ("网页访客1234") are replaced too; names the user typed are kept.
+    this.state.name = saved && !/^网页访客\d+$/.test(saved) ? saved : randomNickname()
+    if (this.state.name !== saved) {
+      try { localStorage.setItem('auru-name', this.state.name) } catch { /* ephemeral */ }
+    }
     this.state.avatar = (() => {
       try { return localStorage.getItem('auru-avatar') ?? '' } catch { return '' }
     })()

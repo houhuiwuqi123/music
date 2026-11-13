@@ -91,7 +91,12 @@ function verifyGlobe() {
     assert.ok(!view.includes('个地点'), 'online/place counts are not shown');
     // No preview panel above the list; zoomed-in globe shows avatar + song bubbles.
     assert.ok(!view.includes('CandyPreviewBar'), 'preview progress panel removed');
-    assert.ok(globe.includes('callout.setExpanded(detailed || id == selectedID)') && globe.includes('view.projectPoint(world)'));
+    assert.ok(globe.includes('callout.setExpanded(detailed || isSelected(id))') && globe.includes('view.projectPoint(world)'));
+    // Plaza downloads are not added to the library until 导入; same-place users fan out when zoomed in.
+    const localLibrary = fs.readFileSync(path.join(root, 'AURU MUSIC', 'Services', 'LocalMusicLibrary.swift'), 'utf8');
+    assert.ok(localLibrary.includes('&& !Self.isPlazaDownload($0)') && localLibrary.includes('static let plazaDownloadsFolder = "Candy Downloads"'));
+    assert.ok(service.includes('"Candy Downloads"'));
+    assert.ok(view.includes('.flatMap(spread)') && globe.includes('id.hasPrefix(selection + "#")'));
     // Avatars always pinned at the place; the list shows 10 with a random redraw.
     assert.ok(view.includes('ForEach(shownListeners)') && view.includes('private static let pageSize = 10'));
     assert.ok(view.includes('marker.avatar = listener.avatar') && globe.includes('private final class CandyGlobeCallout: UIView'));
