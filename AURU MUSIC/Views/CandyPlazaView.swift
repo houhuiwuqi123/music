@@ -388,7 +388,7 @@ struct CandyPlazaView: View {
                     _ = importing.remove(entry.id)
                 }
             } label: {
-                Label("导入", systemImage: "square.and.arrow.down")
+                Label("导入", systemImage: "folder.badge.plus")
                     .font(.caption2.weight(.bold))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)

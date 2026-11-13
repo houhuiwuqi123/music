@@ -216,7 +216,7 @@ struct RootView: View {
             }
             if selectedTab.hasImport {
                 Button { showsImporter = true } label: {
-                    Image(systemName: "square.and.arrow.down.fill").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
+                    Image(systemName: "folder.badge.plus").frame(width: 42, height: 42).background(.thinMaterial, in: Circle())
                 }
                 .disabled(library.isImporting)
                 .accessibilityLabel(settings.text("import"))
@@ -254,7 +254,7 @@ struct RootView: View {
                 Image(systemName: Tab.settings.icon)
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(selectedTab == .settings ? Color.purple : .white)
-                    .frame(width: 54, height: 54)
+                    .frame(width: 46, height: 46)
                     .background(Circle().fill(.white.opacity(selectedTab == .settings ? 0.12 : 0)))
                     .padding(4)
                     .overlay(Circle().stroke(.white.opacity(0.14), lineWidth: 1))
@@ -264,7 +264,7 @@ struct RootView: View {
             .accessibilityLabel(settings.text("settings"))
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.top, 4)
     }
 
     private func tabButton(_ tab: Tab) -> some View {
@@ -280,7 +280,7 @@ struct RootView: View {
             }
             .foregroundStyle(selected ? Color.purple : .white)
             .frame(maxWidth: .infinity)
-            .frame(height: 54)
+            .frame(height: 46)
             .background(Capsule().fill(.white.opacity(selected ? 0.12 : 0)))
             .contentShape(Capsule())
         }
