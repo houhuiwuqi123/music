@@ -337,6 +337,10 @@ final class CandyPlazaService: ObservableObject {
     private var manifestTask: Task<Void, Never>?
     private var shareGeneration = 0
     private var lastSeq: Int64 = 0
+    /// Server time minus device time (ms), from the bootstrap response's Date header. Nodes reject
+    /// announcements more than 1 min ahead / 5 min behind their clock, so a skewed phone would vanish.
+    private var clockOffsetMs: Int64 = 0
+    private var didRefreshBootstrap = false
     private var announcedPresence = false
     private var previewFileObserver: AnyCancellable?
 
@@ -527,7 +531,11 @@ final class CandyPlazaService: ObservableObject {
         guard hasStarted, socket == nil, pathSatisfied else { return }
         connectionState = .connecting
         Task { @MainActor in
-            if self.bootstrapNodes.isEmpty || self.failures % 3 == 2 { await self.refreshBootstrap() }
+            // Fetch the live node list once per launch (a cached list may name nodes that no longer
+            // exist or another deployment), again when empty, and after repeated failures.
+            if !self.didRefreshBootstrap || self.bootstrapNodes.isEmpty || self.failures % 3 == 2 {
+                await self.refreshBootstrap()
+            }
             guard self.hasStarted, self.socket == nil else { return }
             let gateways = self.bootstrapNodes.compactMap(\.gateway).filter { $0.hasPrefix("wss://") }
             let address = gateways.isEmpty ? Self.fallbackGateway : gateways[self.nodeIndex % gateways.count]
@@ -545,19 +553,32 @@ final class CandyPlazaService: ObservableObject {
         }
     }
 
+    private static let httpDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return formatter
+    }()
+
     /// Initial node list from a lightweight node's /api/bootstrap, cached for offline starts.
     private func refreshBootstrap() async {
         var request = URLRequest(url: Self.bootstrapURL)
         request.timeoutInterval = 6
         guard let result = try? await session.data(for: request),
-              (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return }
+              let response = result.1 as? HTTPURLResponse, response.statusCode == 200 else { return }
         let data = result.0
+        if let date = response.value(forHTTPHeaderField: "Date"), let server = Self.httpDate.date(from: date) {
+            // The header has 1 s resolution; +500 ms centres the error.
+            clockOffsetMs = Int64((server.timeIntervalSinceNow) * 1000) + 500
+        }
         struct List: Decodable { var nodes: [CandyNodeInfo] }
         guard let list = try? decoder.decode(List.self, from: data), !list.nodes.isEmpty else { return }
-        // Keep previously known nodes so a single failing bootstrap host is not fatal.
-        var merged = list.nodes
-        for known in bootstrapNodes where !merged.contains(where: { $0.peerId == known.peerId }) { merged.append(known) }
-        bootstrapNodes = Array(merged.prefix(16))
+        didRefreshBootstrap = true
+        // The live list replaces the cache: keeping old entries could pin the app to a node from an
+        // earlier deployment, where nobody else is. The cache is only used when this fetch fails.
+        if bootstrapNodes.map(\.peerId) != list.nodes.map(\.peerId) { nodeIndex = 0 }
+        bootstrapNodes = Array(list.nodes.prefix(16))
         if let encoded = try? encoder.encode(bootstrapNodes) { userDefaults.set(encoded, forKey: "candy_bootstrap_nodes") }
     }
 
@@ -630,7 +651,19 @@ final class CandyPlazaService: ObservableObject {
             if let servers = event.iceServers, !servers.isEmpty { iceServers = servers }
         case "error":
             if event.id?.hasPrefix("announce") == true, let error = event.error, !error.contains("stale") {
-                errorMessage = "广场发布被节点拒绝：\(error)"
+                if error.contains("clock") {
+                    // Re-read the server time and try again instead of staying invisible.
+                    let before = clockOffsetMs
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        await self.refreshBootstrap()
+                        // Only retry when the correction changed, so a persistent failure cannot loop.
+                        if abs(self.clockOffsetMs - before) > 2000 { self.announce() }
+                        else { self.errorMessage = "广场发布被节点拒绝：本机时间与节点相差过大，请开启自动设置时间。" }
+                    }
+                } else {
+                    errorMessage = "广场发布被节点拒绝：\(error)"
+                }
             }
         default: break
         }
@@ -891,7 +924,7 @@ final class CandyPlazaService: ObservableObject {
         let visible = sharesListening && listeningTrack != nil
         guard visible || announcedPresence else { return }
         let via = (node.addrs ?? []).prefix(8).map { $0.contains("/p2p/") ? $0 : "\($0)/p2p/\(node.peerId)" }
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let now = Int64(Date().timeIntervalSince1970 * 1000) + clockOffsetMs
         lastSeq = max(now, lastSeq + 1)
         var body = CandyPlazaBody(peerId: peerID, name: nickname, avatar: avatar, region: region,
             geo: visible ? geo : nil, client: "ios", via: Array(via), files: [], seq: lastSeq)

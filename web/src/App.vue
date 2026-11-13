@@ -10,7 +10,6 @@ const preview = new WebPreview(net)
 const pv = preview.state
 watch(() => pv.phase, (phase) => { if (phase === 'failed') s.error = `听听看：${pv.error}` })
 const query = ref('')
-const cidInput = ref('')
 const editingName = ref(false)
 const nameDraft = ref('')
 const dragging = ref(false)
@@ -62,12 +61,6 @@ function listen(entry: PlazaEntry, file: PlazaFile) {
 }
 
 const downloaded = (cid: string) => s.downloads.some((d) => d.cid === cid && d.state === 'complete')
-
-function findByCID() {
-  const value = cidInput.value.trim()
-  if (value) void net.download(value)
-  cidInput.value = ''
-}
 
 function saveName() {
   net.setName(nameDraft.value)
@@ -143,12 +136,12 @@ const downloading = (cid: string) => s.downloads.some((d) => d.cid === cid && d.
     </p>
 
     <div v-if="s.error" class="error" @click="s.error = ''">{{ s.error }}</div>
+    <div v-if="s.notice" class="notice">{{ s.notice }}</div>
 
     <section class="grid">
       <div class="col">
         <div class="panel">
           <div class="panel-head">
-            <h2>广场</h2>
             <input v-model="query" type="text" placeholder="搜索用户名、歌曲名或地区…" />
           </div>
           <p v-if="!entries.length" class="empty">
@@ -206,14 +199,6 @@ const downloading = (cid: string) => s.downloads.some((d) => d.cid === cid && d.
               </div>
             </div>
             <button v-if="u.cid" @click="net.removeUpload(u.cid)">停止</button>
-          </div>
-        </div>
-
-        <div class="panel">
-          <h2>按哈希查找</h2>
-          <div class="find">
-            <input v-model="cidInput" type="text" placeholder="粘贴 CID（bafkrei…）" @keyup.enter="findByCID" />
-            <button class="primary" :disabled="s.status !== 'online'" @click="findByCID">查找并下载</button>
           </div>
         </div>
 
@@ -309,8 +294,8 @@ h2 { margin: 0 0 12px; font-size: 16px; }
 .row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); margin-top: 10px; }
 .row-main { flex: 1; min-width: 0; }
 .cid { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.find { display: flex; gap: 8px; }
-.find button { flex: none; }
+.notice { background: rgba(255, 181, 71, 0.12); border: 1px solid rgba(255, 181, 71, 0.35); padding: 10px 14px;
+  border-radius: 12px; margin-bottom: 16px; font-size: 14px; }
 progress { width: 100%; height: 6px; margin-top: 6px; accent-color: var(--accent); }
 .save { flex: none; text-decoration: none; font-weight: 700; color: #fff; padding: 7px 14px; border-radius: 10px;
   background: linear-gradient(90deg, var(--accent), var(--accent-2)); }

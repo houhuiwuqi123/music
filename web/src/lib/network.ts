@@ -108,6 +108,8 @@ export class PlazaNetwork {
     /** base64 JPEG (96×96, same as iOS), or '' for none */
     avatar: '',
     error: '',
+    /** Set while the node has not accepted our latest announcement (others cannot see us). */
+    notice: '',
   })
 
   private libp2p?: Libp2p<Services>
@@ -125,6 +127,13 @@ export class PlazaNetwork {
   private online = { promise: Promise.resolve(), wake: () => {} }
   private canceled = new Set<string>()
   private assemblies = new Map<string, Assembly>()
+  /** Server time minus local time (ms). Nodes reject announcements whose seq is >1 min ahead or
+   *  >5 min behind their clock, so a skewed computer clock would silently hide this user. */
+  private clockOffset = 0
+  private lastSeq = 0
+  private checkTimer?: ReturnType<typeof setTimeout>
+  /** Shared-file set last confirmed on the node; null = not yet confirmed since connecting. */
+  private checkFiles: string | null = null
   private blockWatchers = new Map<string, Set<() => void>>()
 
   private nodeURL: string
@@ -235,6 +244,7 @@ export class PlazaNetwork {
   private async loadBootstrap(): Promise<NodeInfo[]> {
     try {
       const res = await fetch(`${this.nodeURL}/api/bootstrap`, { signal: AbortSignal.timeout(8000) })
+      this.noteServerTime(res)
       const list = (await res.json()) as { nodes: NodeInfo[] }
       if (list.nodes?.length) {
         try { localStorage.setItem('auru-bootstrap', JSON.stringify(list.nodes)) } catch { /* ignore */ }
@@ -247,6 +257,36 @@ export class PlazaNetwork {
     } catch { /* ignore */ }
     const configured = (import.meta.env?.VITE_BOOTSTRAP as string | undefined ?? '').split(',').map((s) => s.trim()).filter(Boolean)
     return configured.map((addr) => ({ peerId: addr.split('/p2p/').pop() ?? '', addrs: [addr] }))
+  }
+
+  private noteServerTime(res: Response) {
+    const server = Date.parse(res.headers.get('date') ?? '')
+    if (Number.isFinite(server)) this.clockOffset = server + 500 - Date.now() // header has 1 s resolution
+  }
+
+  /** After announcing, asks the node whether it stored the announcement; retries and explains if not. */
+  private scheduleCheck(seq: number, files: string) {
+    if (this.checkTimer || (files === this.checkFiles && !this.state.notice)) return
+    this.checkTimer = setTimeout(async () => {
+      this.checkTimer = undefined
+      try {
+        const res = await fetch(`${this.nodeURL}/api/plaza`, { signal: AbortSignal.timeout(8000) })
+        this.noteServerTime(res)
+        const list = (await res.json()) as { entries?: { peerId: string; seq: number; files?: { cid: string }[] }[] }
+        const mine = list.entries?.find((e) => e.peerId === this.state.peerId)
+        const stored = (mine?.files ?? []).map((f) => f.cid).sort().join()
+        if (mine && mine.seq >= seq && stored === files) {
+          this.checkFiles = files
+          this.state.notice = ''
+          return
+        }
+        const skew = Math.round(this.clockOffset / 1000)
+        this.state.notice = Math.abs(skew) > 50
+          ? `本机时间与服务器相差 ${skew} 秒，节点拒收了广场公告。已自动校正，正在重试…`
+          : '节点暂未收到你的广场公告，其他用户（含 iOS）还看不到你分享的文件。正在重试…'
+        void this.announce()
+      } catch { /* check again with the next announcement */ }
+    }, 4000)
   }
 
   private scheduleReconnect() {
@@ -285,6 +325,7 @@ export class PlazaNetwork {
     this.state.status = 'online'
     await Promise.all([this.loadSnapshot(), this.loadMeta()])
     this.provided.clear()
+    this.checkFiles = null
     await this.announce()
     void this.provideAll()
   }
@@ -348,6 +389,12 @@ export class PlazaNetwork {
     return result.slice(0, 8)
   }
 
+  /** Unix ms on the server's clock, strictly increasing. */
+  private nextSeq(): number {
+    this.lastSeq = Math.max(this.lastSeq + 1, Math.round(Date.now() + this.clockOffset))
+    return this.lastSeq
+  }
+
   async announce(bye = false) {
     if (!this.libp2p || !this.key || (this.connectedNodes.size === 0 && !bye)) return
     const files: PlazaFile[] = [...this.sources.values()].map((s) => ({
@@ -356,10 +403,11 @@ export class PlazaNetwork {
     const body: PlazaBody = { v: 1, peerId: this.state.peerId, name: this.state.name,
       avatar: this.state.avatar || undefined, region: this.state.region || undefined,
       geo: this.state.geo,
-      client: 'web', via: this.via(), files: bye ? [] : files, seq: Date.now(), bye: bye || undefined }
+      client: 'web', via: this.via(), files: bye ? [] : files, seq: this.nextSeq(), bye: bye || undefined }
     try {
       const env = await signEnvelope(this.key, body)
       await this.libp2p.services.pubsub.publish(PLAZA_TOPIC, encoder.encode(JSON.stringify(env)))
+      if (!bye) this.scheduleCheck(body.seq, files.map((f) => f.cid).sort().join())
     } catch (error) {
       console.warn('announce failed', error)
     }
