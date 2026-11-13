@@ -727,10 +727,12 @@ final class CandyPlazaService: ObservableObject {
             let body = entry.body
             // Prefer the song being listened to; web peers show their (first) uploaded file.
             let shared = body.files.first { $0.kind == "listening" } ?? body.files.first
-            guard body.listening != nil || shared != nil else { return nil }
+            // Online users always show (e.g. a web page that shares nothing yet); offline ones only
+            // while they still have something to offer.
+            guard body.listening != nil || shared != nil || !entry.offline else { return nil }
             let file = shared.map { CandyPlazaFile(id: $0.cid, name: $0.name, size: $0.size, ownerId: body.peerId,
                 ownerName: body.name, sha256: $0.sha256) }
-            let title = body.listening?.title ?? shared.map { "分享：\($0.name)" } ?? ""
+            let title = body.listening?.title ?? shared.map { "分享：\($0.name)" } ?? "在线"
             var offlineAt: Int64?
             if entry.offline {
                 offlineAt = offlineSince[body.peerId] ?? now
@@ -740,7 +742,7 @@ final class CandyPlazaService: ObservableObject {
                 ?? body.region.flatMap { regionGeo($0) }
             return CandyPlazaListening(clientId: body.peerId, ownerName: body.name, title: title,
                 artist: body.listening?.artist ?? (body.client == "web" ? "网页端" : ""),
-                isPlaying: body.listening?.isPlaying ?? true, region: body.region,
+                isPlaying: body.listening?.isPlaying ?? (shared != nil), region: body.region,
                 latitude: geo?[0], longitude: geo?[1], file: file, avatar: body.avatar,
                 offlineAt: offlineAt)
         }.sorted { $0.clientId < $1.clientId }

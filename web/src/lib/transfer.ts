@@ -153,6 +153,8 @@ export class Assembly {
   parts: Blob[] = []
   verified = 0
   meta?: Meta
+  /** Called after each verified block is appended (used by 听听看 to stream). */
+  onBlock?: () => void
   private whole = sha256.create()
   readonly cid: string
   constructor(cid: string) { this.cid = cid }
@@ -181,6 +183,7 @@ export class Assembly {
     this.whole.update(block)
     this.parts.push(new Blob([block as Uint8Array<ArrayBuffer>]))
     this.verified += block.length
+    this.onBlock?.()
   }
 
   finish(): Blob {

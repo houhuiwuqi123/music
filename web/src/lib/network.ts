@@ -124,6 +124,8 @@ export class PlazaNetwork {
   private provided = new Set<string>()
   private online = { promise: Promise.resolve(), wake: () => {} }
   private canceled = new Set<string>()
+  private assemblies = new Map<string, Assembly>()
+  private blockWatchers = new Map<string, Set<() => void>>()
 
   private nodeURL: string
 
@@ -167,6 +169,10 @@ export class PlazaNetwork {
     await libp2p.handle(SIGNAL_PROTO, (stream, connection) => this.onSignalStream(stream, connection.remotePeer.toString()))
     const pubsub = this.libp2p.services.pubsub
     pubsub.subscribe(PLAZA_TOPIC)
+    // Announcing before a node has subscribed reaches no one; repeat as soon as one does.
+    pubsub.addEventListener('subscription-change', (evt) => {
+      if (evt.detail.subscriptions.some((sub) => sub.topic === PLAZA_TOPIC && sub.subscribe)) void this.announce()
+    })
     pubsub.addEventListener('message', (evt: CustomEvent<Message>) => {
       if (evt.detail.topic !== PLAZA_TOPIC) return
       try { void this.applyEnvelope(JSON.parse(decoder.decode(evt.detail.data)) as Envelope) } catch { /* ignore */ }
@@ -579,6 +585,8 @@ export class PlazaNetwork {
       from: hint?.from, progress: 0, status: '查找提供者…', state: 'running' as const })
     this.state.downloads.unshift(task)
     const assembly = new Assembly(cid)
+    this.assemblies.set(cid, assembly)
+    assembly.onBlock = () => { for (const fn of this.blockWatchers.get(cid) ?? []) fn() }
     const deadline = Date.now() + 10 * 60_000
     let delay = 1000
     while (task.state === 'running' && Date.now() < deadline) {
@@ -636,4 +644,15 @@ export class PlazaNetwork {
   }
 
   cancel(id: string) { this.canceled.add(id) }
+
+  /** Verified blocks of the latest download of `cid`, in order (for streaming playback). */
+  assemblyFor(cid: string): Assembly | undefined { return this.assemblies.get(cid) }
+
+  /** Calls `fn` whenever a new verified block of `cid` arrives; returns an unsubscribe function. */
+  watchBlocks(cid: string, fn: () => void): () => void {
+    const set = this.blockWatchers.get(cid) ?? new Set()
+    set.add(fn)
+    this.blockWatchers.set(cid, set)
+    return () => { set.delete(fn); if (!set.size) this.blockWatchers.delete(cid) }
+  }
 }

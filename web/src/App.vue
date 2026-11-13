@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { PlazaNetwork, type PlazaEntry } from './lib/network.ts'
 import type { PlazaFile } from './lib/plaza.ts'
+import { WebPreview, isSong } from './lib/preview.ts'
 
 const net = new PlazaNetwork()
 const s = net.state
+const preview = new WebPreview(net)
+const pv = preview.state
+watch(() => pv.phase, (phase) => { if (phase === 'failed') s.error = `听听看：${pv.error}` })
 const query = ref('')
 const cidInput = ref('')
 const editingName = ref(false)
@@ -52,6 +56,12 @@ function drop(event: DragEvent) {
 function download(entry: PlazaEntry, file: PlazaFile) {
   void net.download(file.cid, { name: file.name, size: file.size, from: entry.body.name })
 }
+
+function listen(entry: PlazaEntry, file: PlazaFile) {
+  preview.listen(file, entry.body.name)
+}
+
+const downloaded = (cid: string) => s.downloads.some((d) => d.cid === cid && d.state === 'complete')
 
 function findByCID() {
   const value = cidInput.value.trim()
@@ -162,6 +172,15 @@ const downloading = (cid: string) => s.downloads.some((d) => d.cid === cid && d.
                 <span class="kind">{{ f.kind === 'listening' ? '在听' : '上传' }}</span>
                 <span class="fname" :title="f.cid">{{ f.name }}</span>
                 <span class="muted">{{ size(f.size) }}</span>
+                <button v-if="isSong(f.name)" class="listen" :class="{ on: pv.cid === f.cid }"
+                        :disabled="e.offline && !downloaded(f.cid) && pv.cid !== f.cid"
+                        :title="pv.cid === f.cid && pv.phase === 'playing' ? '暂停' : '听听看'" @click="listen(e, f)">
+                  <span v-if="pv.cid === f.cid && pv.phase === 'buffering'" class="spin" />
+                  <template v-else-if="pv.cid === f.cid && pv.phase === 'failed'">⚠ 重试</template>
+                  <span v-else-if="pv.cid === f.cid" class="eq" :class="{ paused: pv.phase !== 'playing' }"><i /><i /><i /><i /></span>
+                  <template v-else>▶ 听听看</template>
+                </button>
+                <button v-else class="listen" disabled title="不是音乐文件">▶ 听听看</button>
                 <button :disabled="e.offline || downloading(f.cid)" @click="download(e, f)">下载</button>
               </div>
             </div>
@@ -266,6 +285,22 @@ h2 { margin: 0 0 12px; font-size: 16px; }
 .muted { color: var(--muted); font-size: 13px; }
 .file { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .file button { padding: 4px 12px; margin-left: auto; flex: none; }
+.file .listen { margin-left: auto; min-width: 76px; border: 0; color: var(--accent-2);
+  background: rgba(155, 124, 242, 0.16); display: inline-flex; align-items: center; justify-content: center; }
+.file .listen.on { background: rgba(155, 124, 242, 0.26); }
+.file .listen:disabled { color: var(--muted); background: var(--line); }
+.file .listen + button { margin-left: 0; }
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(155, 124, 242, 0.3);
+  border-top-color: var(--accent-2); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.eq { display: inline-flex; align-items: flex-end; gap: 2.5px; height: 14px; }
+.eq i { width: 3px; height: 100%; border-radius: 2px; background: var(--accent-2); transform-origin: bottom;
+  animation: eq 0.9s ease-in-out infinite; }
+.eq i:nth-child(2) { animation-delay: -0.3s; animation-duration: 0.7s; }
+.eq i:nth-child(3) { animation-delay: -0.6s; animation-duration: 1.1s; }
+.eq i:nth-child(4) { animation-delay: -0.15s; animation-duration: 0.8s; }
+.eq.paused i { animation-play-state: paused; transform: scaleY(0.45); }
+@keyframes eq { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
 .kind { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--line); flex: none; }
 .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-weight: 600; }
 .drop { border: 1.5px dashed var(--line); border-radius: 14px; padding: 22px 16px; text-align: center; cursor: pointer;
