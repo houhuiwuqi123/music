@@ -229,11 +229,11 @@ struct CandyGlobeView: UIViewRepresentable {
 
         private func makeMarker(_ marker: CandyGlobeMarker, selected: Bool) -> SCNNode {
             let isDark = dark ?? false
-            // Online places light up warm like city lights; places where someone is playing glow brightest.
-            let lit = marker.playing ? UIColor(red: 1, green: 0.5, blue: 0.05, alpha: 1)
-                : UIColor(red: 1, green: 0.7, blue: 0.18, alpha: 1)
+            // Online places light up in the app's purple; places where someone is playing glow brightest.
+            let lit = marker.playing ? UIColor(red: 0.78, green: 0.4, blue: 1, alpha: 1)
+                : UIColor(red: 0.62, green: 0.5, blue: 1, alpha: 1)
             let base: UIColor = marker.online ? lit : UIColor(white: isDark ? 0.5 : 0.66, alpha: 1)
-            let color = selected ? UIColor.systemPink : base
+            let color = selected ? UIColor(red: 0.9, green: 0.62, blue: 1, alpha: 1) : base
             let size = CGFloat(selected ? 0.034 : min(0.03, 0.018 + 0.003 * Double(max(0, marker.count - 1))))
 
             let node = SCNNode()
@@ -497,7 +497,7 @@ private final class CandyGlobeCallout: UIView {
         initialLabel.textAlignment = .center
         initialLabel.textColor = .white
         initialLabel.font = .systemFont(ofSize: 13, weight: .bold)
-        initialLabel.backgroundColor = .systemPink
+        initialLabel.backgroundColor = .systemPurple
         nameLabel.font = .systemFont(ofSize: 11, weight: .semibold)
         songLabel.font = .systemFont(ofSize: 10, weight: .regular)
         [initialLabel, avatarView, nameLabel, songLabel].forEach(addSubview)
@@ -508,7 +508,7 @@ private final class CandyGlobeCallout: UIView {
     func configure(_ marker: CandyGlobeMarker, selected: Bool, dark: Bool) {
         backgroundColor = dark ? UIColor(white: 0.16, alpha: 0.94) : UIColor(white: 1, alpha: 0.95)
         layer.borderWidth = selected ? 1.5 : 0
-        layer.borderColor = UIColor.systemPink.cgColor
+        layer.borderColor = UIColor.systemPurple.cgColor
         nameLabel.textColor = dark ? .white : UIColor(white: 0.1, alpha: 1)
         songLabel.textColor = dark ? UIColor(white: 0.72, alpha: 1) : UIColor(white: 0.4, alpha: 1)
         nameLabel.text = marker.count > 1 ? "\(marker.name) 等\(marker.count)人" : marker.name
