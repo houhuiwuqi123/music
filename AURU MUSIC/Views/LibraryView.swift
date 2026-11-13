@@ -60,30 +60,42 @@ struct LibraryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
-                    .padding(.bottom, 14)
-                ForEach(Entry.allCases, id: \.self) { item in
-                    Button { open(item) } label: { row(item) }
-                        .buttonStyle(LibraryRowStyle())
+                    .padding(.bottom, 18)
+                // One glass card holding the rows, like the app's other grouped content.
+                VStack(spacing: 0) {
+                    ForEach(Entry.allCases, id: \.self) { item in
+                        Button { open(item) } label: { row(item, last: item == Entry.allCases.last) }
+                            .buttonStyle(LibraryRowStyle())
+                    }
                 }
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .glassCard(cornerRadius: 22)
             }
             .padding(.horizontal, 20)
             .padding(.top, 8)
             .padding(.bottom, 140)
         }
         .scrollIndicators(.hidden)
+        .background(DarkBackground())
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
-            Text(settings.text("library"))
-                .font(.system(size: 34, weight: .heavy))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            VStack(alignment: .leading, spacing: 2) {
+                // Same brand line as the top bar on Home and Plaza.
+                Text("AURU MUSIC")
+                    .font(.caption.weight(.black)).tracking(2)
+                    .foregroundStyle(.purple)
+                Text(settings.text("library"))
+                    .font(.system(size: 34, weight: .heavy))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
             Spacer()
             Button(action: onImport) {
                 Image(systemName: "plus")
                     .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 44, height: 44)
+                    .frame(width: 42, height: 42)
                     .background(.thinMaterial, in: Circle())
             }
             .buttonStyle(.plain)
@@ -92,31 +104,33 @@ struct LibraryView: View {
         }
     }
 
-    private func row(_ item: Entry) -> some View {
-        HStack(spacing: 18) {
+    private func row(_ item: Entry, last: Bool) -> some View {
+        HStack(spacing: 16) {
             Image(systemName: item.icon)
-                .font(.system(size: 24, weight: .regular))
-                .foregroundStyle(
-                    LinearGradient(colors: [.pink, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
-                )
-                .frame(width: 34)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.purple)
+                .frame(width: 30)
             VStack(spacing: 0) {
                 HStack {
                     Text(settings.text(item.titleKey))
-                        .font(.system(size: 21))
-                        .foregroundStyle(.primary)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white)
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.4))
                 }
-                .frame(height: 62)
+                .frame(height: 60)
                 // Separator starts under the text, as in iOS list rows.
-                Rectangle()
-                    .fill(Color.primary.opacity(0.14))
-                    .frame(height: 0.5)
+                if !last {
+                    Rectangle()
+                        .fill(.white.opacity(0.11))
+                        .frame(height: 0.5)
+                }
             }
         }
+        .padding(.leading, 18)
+        .padding(.trailing, 16)
         .contentShape(Rectangle())
     }
 
@@ -132,25 +146,30 @@ struct LibraryView: View {
 
     private func detail(_ item: Entry) -> some View {
         VStack(spacing: 6) {
-            HStack(spacing: 4) {
+            // Same look as the top bar on Home and Plaza: round glass button, brand line + title.
+            HStack(spacing: 10) {
                 Button {
                     section = nil
                 } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.left").font(.system(size: 17, weight: .semibold))
-                        Text(settings.text("library"))
-                    }
-                    .foregroundStyle(.purple)
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 42, height: 42)
+                        .background(.thinMaterial, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(settings.text("library"))
                 Spacer()
-                Text(settings.text(item.titleKey)).font(.headline)
+                VStack(spacing: 1) {
+                    Text("AURU MUSIC")
+                        .font(.caption.weight(.black)).tracking(2)
+                        .foregroundStyle(.purple)
+                    Text(settings.text(item.titleKey)).font(.headline)
+                }
                 Spacer()
                 // Balances the back button so the title stays centred.
-                Color.clear.frame(width: 70, height: 1)
+                Color.clear.frame(width: 42, height: 42)
             }
-            .padding(.horizontal, 16)
-            .frame(height: 40)
+            .padding(.horizontal, 17)
 
             switch item {
             case .playlists: PlaylistsView()
@@ -159,6 +178,7 @@ struct LibraryView: View {
             case .recognize: EmptyView()
             }
         }
+        .background(DarkBackground())
         .gesture(
             // Edge swipe right goes back, like a navigation pop.
             DragGesture(minimumDistance: 20).onEnded { value in
@@ -171,6 +191,6 @@ struct LibraryView: View {
 private struct LibraryRowStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(Color.primary.opacity(configuration.isPressed ? 0.06 : 0))
+            .background(Color.purple.opacity(configuration.isPressed ? 0.16 : 0))
     }
 }
