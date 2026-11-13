@@ -1,4 +1,5 @@
 import Combine
+import CoreLocation
 import CryptoKit
 import Foundation
 import Network
@@ -323,6 +324,13 @@ final class CandyPlazaService: ObservableObject {
     // Plaza state
     private var entries: [String: CandyPlazaEntry] = [:]
     private var offlineSince: [String: Int64] = [:]
+    /// Fallback for peers whose announcement has a region but no `geo` (older web pages and
+    /// apps, or a node without coordinates): the region name is geocoded once and cached.
+    /// An empty array caches "no result" so the name is not looked up again.
+    private var regionCoordinates: [String: [Double]] =
+        (UserDefaults.standard.dictionary(forKey: "candy_region_geo") as? [String: [Double]]) ?? [:]
+    private var regionQueue: [String] = []
+    private let regionGeocoder = CLGeocoder()
     private var listeningTrack: Track?
     private var listeningIsPlaying = false
     private var share: (trackID: UUID, file: CandyPlazaFile)?
@@ -729,12 +737,50 @@ final class CandyPlazaService: ObservableObject {
                 offlineSince[body.peerId] = offlineAt
             }
             let geo = body.geo.flatMap { $0.count == 2 && abs($0[0]) <= 90 && abs($0[1]) <= 180 ? $0 : nil }
+                ?? body.region.flatMap { regionGeo($0) }
             return CandyPlazaListening(clientId: body.peerId, ownerName: body.name, title: title,
                 artist: body.listening?.artist ?? (body.client == "web" ? "网页端" : ""),
                 isPlaying: body.listening?.isPlaying ?? true, region: body.region,
                 latitude: geo?[0], longitude: geo?[1], file: file, avatar: body.avatar,
                 offlineAt: offlineAt)
         }.sorted { $0.clientId < $1.clientId }
+    }
+
+    private func regionGeo(_ raw: String) -> [Double]? {
+        let region = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !region.isEmpty, !["未知", "未知地区", "局域网", "本机"].contains(region) else { return nil }
+        if let cached = regionCoordinates[region] { return cached.count == 2 ? cached : nil }
+        if !regionQueue.contains(region) {
+            regionQueue.append(region)
+            geocodeNextRegion()
+        }
+        return nil
+    }
+
+    /// CLGeocoder handles one request at a time, so region names are looked up in turn.
+    private func geocodeNextRegion() {
+        guard !regionGeocoder.isGeocoding, let region = regionQueue.first else { return }
+        regionGeocoder.geocodeAddressString(region) { [weak self] placemarks, error in
+            let coordinate = placemarks?.first?.location?.coordinate
+            let notFound = (error as? CLError)?.code == .geocodeFoundNoResult
+            Task { @MainActor in
+                guard let self else { return }
+                self.regionQueue.removeAll { $0 == region }
+                if let coordinate {
+                    // Same 0.1° precision as node-provided geo.
+                    self.regionCoordinates[region] = [(coordinate.latitude * 10).rounded() / 10,
+                                                      (coordinate.longitude * 10).rounded() / 10]
+                } else if notFound {
+                    self.regionCoordinates[region] = []
+                }
+                if coordinate != nil || notFound {
+                    self.userDefaults.set(self.regionCoordinates, forKey: "candy_region_geo")
+                    self.rebuildListeners()
+                }
+                // Network errors are not cached; the name is retried on the next rebuild.
+                self.geocodeNextRegion()
+            }
+        }
     }
 
     private func markListenersOffline() {
