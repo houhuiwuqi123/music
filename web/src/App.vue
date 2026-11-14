@@ -106,6 +106,11 @@ function copy(text: string) {
 }
 
 const downloading = (cid: string) => s.downloads.some((d) => d.cid === cid && d.state === 'running')
+/** 听听看 found nobody able to send this file (cleared after a minute or on a new try). */
+const unavailable = (cid: string) => !!s.unavailable[cid] && !downloaded(cid)
+// When 听听看 gives up on a file, its earlier error message goes too.
+watch(() => Object.keys(s.unavailable).length, () => { if (s.error.startsWith('听听看：')) s.error = '' })
+const sharing = computed(() => s.status === 'online' && s.reachable)
 </script>
 
 <template>
@@ -165,7 +170,9 @@ const downloading = (cid: string) => s.downloads.some((d) => d.cid === cid && d.
                 <span class="kind">{{ f.kind === 'listening' ? '在听' : '上传' }}</span>
                 <span class="fname" :title="f.cid">{{ f.name }}</span>
                 <span class="muted">{{ size(f.size) }}</span>
-                <button v-if="isSong(f.name)" class="listen" :class="{ on: pv.cid === f.cid }"
+                <button v-if="isSong(f.name) && unavailable(f.cid) && pv.cid !== f.cid" class="listen" disabled
+                        title="对方暂时无法传输该文件">不可传输</button>
+                <button v-else-if="isSong(f.name)" class="listen" :class="{ on: pv.cid === f.cid }"
                         :disabled="e.offline && !downloaded(f.cid) && pv.cid !== f.cid"
                         :title="pv.cid === f.cid && pv.phase === 'playing' ? '暂停' : '听听看'" @click="listen(e, f)">
                   <span v-if="pv.cid === f.cid && pv.phase === 'buffering'" class="spin" />
@@ -196,6 +203,9 @@ const downloading = (cid: string) => s.downloads.some((d) => d.cid === cid && d.
               <div v-if="u.hashing !== undefined" class="muted">计算哈希 {{ Math.round(u.hashing * 100) }}%</div>
               <div v-else class="muted cid" @click="copy(u.cid)" title="点击复制 CID">
                 <code>{{ u.cid }}</code><span v-if="u.serving"> · 正在发送 {{ u.serving }}</span>
+              </div>
+              <div v-if="u.cid" class="share-state" :class="{ bad: !sharing }">
+                {{ sharing ? '● 可被下载' : '● 分享已失效：与节点断开，正在重新连接…' }}
               </div>
             </div>
             <button v-if="u.cid" @click="net.removeUpload(u.cid)">停止</button>
@@ -294,6 +304,8 @@ h2 { margin: 0 0 12px; font-size: 16px; }
 .row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); margin-top: 10px; }
 .row-main { flex: 1; min-width: 0; }
 .cid { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-state { font-size: 12px; color: #4ade80; margin-top: 2px; }
+.share-state.bad { color: #fbbf24; }
 .notice { background: rgba(255, 181, 71, 0.12); border: 1px solid rgba(255, 181, 71, 0.35); padding: 10px 14px;
   border-radius: 12px; margin-bottom: 16px; font-size: 14px; }
 progress { width: 100%; height: 6px; margin-top: 6px; accent-color: var(--accent); }

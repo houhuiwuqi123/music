@@ -374,6 +374,8 @@ final class CandyReliableTransfer {
     var verified: ((CandyPlazaFile, Int64) -> Void)?
     var completed: ((CandyPlazaFile, URL) -> Void)?
     var failed: ((CandyPlazaFile?, String) -> Void)?
+    /// A quick (听听看) download found nobody able to send the file and stopped.
+    var unavailable: ((CandyPlazaFile) -> Void)?
     var publicationUnavailable: ((String) -> Void)?
 
     private final class Job {
@@ -383,6 +385,8 @@ final class CandyReliableTransfer {
         var peer: CandyRTCPeer?
         var lastUIUpdate = Date.distantPast
         var verifiedBytes: Int64 = 0
+        /// Started by 听听看: gives up after two rounds that get nothing instead of retrying for minutes.
+        var quick = false
         init(file: CandyPlazaFile, folder: URL) {
             self.file = file
             disk = CandyTransferDisk(file: file, folder: folder)
@@ -587,9 +591,13 @@ final class CandyReliableTransfer {
 
     // MARK: Downloading (receiver side)
 
-    func download(_ file: CandyPlazaFile) {
-        guard jobs[file.id] == nil else { return }
+    func download(_ file: CandyPlazaFile, quick: Bool = false) {
+        if let running = jobs[file.id] {
+            if !quick { running.quick = false } // an explicit download keeps retrying
+            return
+        }
         let job = Job(file: file, folder: folder)
+        job.quick = quick
         jobs[file.id] = job
         changed?(file, 0, "DHT 查询提供者…")
         job.task = Task { @MainActor [weak self] in await self?.run(job) }
@@ -637,6 +645,7 @@ final class CandyReliableTransfer {
     private func run(_ job: Job) async {
         let deadline = Date().addingTimeInterval(600)
         var delay = 1.0
+        var fruitlessRounds = 0
         do {
             var offset = try await job.disk.prepare()
             if await job.disk.isCompleted {
@@ -652,6 +661,7 @@ final class CandyReliableTransfer {
                     await pause(2)
                     continue
                 }
+                let roundStart = offset
                 report(job, offset, "DHT 查询提供者（GET_PROVIDERS）…")
                 // The listener the user tapped is online and playing this song: try them first.
                 let owner = job.file.ownerId
@@ -674,6 +684,14 @@ final class CandyReliableTransfer {
                         report(job, offset, "\(error.localizedDescription)，将从 \(resumed / 1_048_576) MB 处续传")
                     }
                 }
+                offset = try await job.disk.durableOffset()
+                fruitlessRounds = offset > roundStart ? 0 : fruitlessRounds + 1
+                if job.quick && fruitlessRounds >= 2 {
+                    // Nobody can send it right now: stop quietly; the partial file is kept.
+                    try await job.disk.close()
+                    giveUp(job)
+                    return
+                }
                 await pause(delay * Double.random(in: 0.75...1.25))
                 delay = min(30, delay * 2)
             }
@@ -692,6 +710,12 @@ final class CandyReliableTransfer {
         guard jobs[job.file.id] === job else { return }
         jobs.removeValue(forKey: job.file.id)
         completed?(job.file, url)
+    }
+
+    private func giveUp(_ job: Job) {
+        guard jobs[job.file.id] === job else { return }
+        jobs.removeValue(forKey: job.file.id)
+        unavailable?(job.file)
     }
 
     private func fail(_ job: Job, _ message: String) {

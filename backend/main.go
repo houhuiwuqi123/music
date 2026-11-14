@@ -9,6 +9,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"log"
 	"net"
@@ -131,7 +132,11 @@ func routes(n *node.Node, ice func(string) []node.ICEServer, region func(*http.R
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		if _, err := n.PublishEnvelope(ctx, env); err != nil && !node.IsStale(err) {
+		if err := n.AnnounceHTTP(ctx, env); errors.Is(err, node.ErrNotAttached) {
+			// Stored as offline; the page reconnects to the node and announces again.
+			writeJSONStatus(w, http.StatusConflict, map[string]any{"error": err.Error(), "time": time.Now().UnixMilli()})
+			return
+		} else if err != nil {
 			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "time": time.Now().UnixMilli()})
 			return
 		}

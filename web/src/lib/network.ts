@@ -30,6 +30,9 @@ export const PLAZA_TOPIC = 'auru/plaza/1'
 const ENTRY_TTL = 90_000
 const OFFLINE_RETENTION = 60_000
 const ANNOUNCE_EVERY = 30_000
+const LINK_CHECK_EVERY = 20_000
+/** How long a file that could not be fetched stays marked "不可传输". */
+const UNAVAILABLE_FOR = 60_000
 const MAX_UPLOADS = 3
 
 export interface NodeInfo { peerId: string; addrs: string[]; gateway?: string }
@@ -44,6 +47,8 @@ export interface DownloadTask {
   id: string; cid: string; name: string; size: number; from?: string
   progress: number; status: string; state: 'running' | 'complete' | 'failed' | 'canceled'
   url?: string
+  /** Started by 听听看: gives up after a couple of rounds that get nothing, instead of retrying for minutes. */
+  quick?: boolean
 }
 export interface UploadEntry { cid: string; name: string; size: number; serving: number; hashing?: number }
 
@@ -120,6 +125,10 @@ export class PlazaNetwork {
     error: '',
     /** Set while the node has not accepted our latest announcement (others cannot see us). */
     notice: '',
+    /** False when the node says it cannot reach this page: shared files cannot be downloaded. */
+    reachable: true,
+    /** CIDs that 听听看 found nobody able to send, with the time it gave up. */
+    unavailable: {} as Record<string, number>,
   })
 
   private libp2p?: Libp2p<Services>
@@ -145,6 +154,7 @@ export class PlazaNetwork {
   /** Shared-file set last confirmed on the node; null = not yet confirmed since connecting. */
   private checkFiles: string | null = null
   private blockWatchers = new Map<string, Set<() => void>>()
+  private relinking = false
 
   private nodeURL: string
 
@@ -220,7 +230,15 @@ export class PlazaNetwork {
       window.addEventListener('offline', () => { this.state.status = 'offline' })
       window.addEventListener('pagehide', () => { void this.announce(true) })
     }
+    if (typeof document !== 'undefined') {
+      // A background or frozen tab can lose its node connection without noticing; check it
+      // the moment the page is shown again.
+      const back = () => { if (document.visibilityState === 'visible') void this.revive() }
+      document.addEventListener('visibilitychange', back)
+      document.addEventListener('resume', back)
+    }
     this.timers.push(setInterval(() => void this.announce(), ANNOUNCE_EVERY))
+    this.timers.push(setInterval(() => void this.checkLinks(), LINK_CHECK_EVERY))
     this.timers.push(setInterval(() => this.sweep(), 1000))
     this.timers.push(setInterval(() => { this.provided.clear(); void this.provideAll() }, 3_600_000))
     await this.connect()
@@ -281,18 +299,25 @@ export class PlazaNetwork {
 
   /** After announcing, asks the node whether it stored the announcement; retries and explains if not. */
   private scheduleCheck(seq: number, files: string) {
-    if (this.checkTimer || (files === this.checkFiles && !this.state.notice)) return
+    if (this.checkTimer || (files === this.checkFiles && !this.state.notice && this.state.reachable)) return
     this.checkTimer = setTimeout(async () => {
       this.checkTimer = undefined
       try {
         const res = await fetch(`${this.nodeURL}/api/plaza`, { signal: AbortSignal.timeout(8000) })
         this.noteServerTime(res)
-        const list = (await res.json()) as { entries?: { peerId: string; seq: number; files?: { cid: string }[] }[] }
+        const list = (await res.json()) as {
+          entries?: { peerId: string; seq: number; offline?: boolean; files?: { cid: string }[] }[]
+        }
         const mine = list.entries?.find((e) => e.peerId === this.state.peerId)
         const stored = (mine?.files ?? []).map((f) => f.cid).sort().join()
-        if (mine && mine.seq >= seq && stored === files) {
+        if (mine && mine.seq >= seq && stored === files && !mine.offline) {
           this.checkFiles = files
           this.state.notice = ''
+          this.state.reachable = true
+          return
+        }
+        if (mine?.offline) {
+          this.unreachable()
           return
         }
         const skew = Math.round(this.clockOffset / 1000)
@@ -302,6 +327,70 @@ export class PlazaNetwork {
         void this.announce()
       } catch { /* check again with the next announcement */ }
     }, 4000)
+  }
+
+  /** Pings each node; a connection that does not answer is dropped so the page reconnects. */
+  private async checkLinks(): Promise<boolean> {
+    const libp2p = this.libp2p
+    if (!libp2p || this.connectedNodes.size === 0 || this.relinking) return false
+    const ping = libp2p.services.ping as { ping(peer: unknown, options: { signal: AbortSignal }): Promise<number> }
+    let healthy = 0
+    await Promise.all([...this.connectedNodes.keys()].map(async (id) => {
+      const peer = peerIdFromString(id)
+      try {
+        if (!libp2p.getConnections(peer).length) throw new Error('no connection')
+        await ping.ping(peer, { signal: AbortSignal.timeout(6000) })
+        healthy++
+      } catch {
+        this.connectedNodes.delete(id)
+        await libp2p.hangUp(peer).catch(() => undefined)
+      }
+    }))
+    this.state.nodes = [...this.connectedNodes.keys()]
+    if (this.connectedNodes.size === 0) {
+      this.state.status = 'offline'
+      this.state.reachable = false
+      this.reconnectDelay = 1000
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = undefined
+      void this.connect()
+    }
+    return healthy > 0
+  }
+
+  /** The page is visible again: make sure the node can still reach us, then re-announce. */
+  private async revive() {
+    if (this.state.status !== 'online') {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = undefined
+      this.reconnectDelay = 1000
+      await this.connect()
+      return
+    }
+    if (await this.checkLinks()) {
+      this.checkFiles = null // confirm the node still lists our files as reachable
+      await this.announce()
+    }
+  }
+
+  /** The node says it has no connection to us: drop the stale links and dial again. */
+  private async relink() {
+    const libp2p = this.libp2p
+    if (!libp2p || this.relinking) return
+    this.relinking = true
+    try {
+      for (const id of [...this.connectedNodes.keys()]) {
+        this.connectedNodes.delete(id)
+        await libp2p.hangUp(peerIdFromString(id)).catch(() => undefined)
+      }
+      this.state.nodes = []
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = undefined
+      this.reconnectDelay = 1000
+      await this.connect()
+    } finally {
+      this.relinking = false
+    }
   }
 
   private scheduleReconnect() {
@@ -422,9 +511,14 @@ export class PlazaNetwork {
     const reply = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; time?: number }
     if (res.ok) {
       this.state.notice = ''
+      this.state.reachable = true
       return
     }
     const error = reply.error ?? `HTTP ${res.status}`
+    if (res.status === 409) {
+      this.unreachable()
+      return
+    }
     if (error.includes('clock') && typeof reply.time === 'number' && !retried) {
       this.clockOffset = reply.time - Date.now()
       const env = JSON.parse(text) as Envelope
@@ -434,6 +528,13 @@ export class PlazaNetwork {
       return
     }
     this.state.notice = `节点拒收了你的广场公告：${error}`
+  }
+
+  /** The node lists us as offline: others would see the share but cannot fetch it. Reconnect. */
+  private unreachable() {
+    this.state.reachable = false
+    this.state.notice = '与节点的连接已失效（如页面在后台过久），其他用户暂时无法下载你分享的文件。正在重新连接…'
+    void this.relink()
   }
 
   /** Unix ms on the server's clock, strictly increasing. */
@@ -678,21 +779,28 @@ export class PlazaNetwork {
 
   // ---- downloads with resume across network changes ----
 
-  async download(cid: string, hint?: { name?: string; size?: number; from?: string }) {
+  async download(cid: string, hint?: { name?: string; size?: number; from?: string; quick?: boolean }) {
     try { sha256FromCID(cid) } catch (error) {
       this.state.error = (error as Error).message
       return
     }
-    if (this.state.downloads.some((d) => d.cid === cid && d.state === 'running')) return
+    const running = this.state.downloads.find((d) => d.cid === cid && d.state === 'running')
+    if (running) {
+      if (!hint?.quick) running.quick = false // an explicit download keeps retrying
+      return
+    }
+    delete this.state.unavailable[cid]
     const task: DownloadTask = reactive({ id: crypto.randomUUID(), cid, name: hint?.name ?? cid.slice(0, 16), size: hint?.size ?? 0,
-      from: hint?.from, progress: 0, status: '查找提供者…', state: 'running' as const })
+      from: hint?.from, progress: 0, status: '查找提供者…', state: 'running' as const, quick: hint?.quick })
     this.state.downloads.unshift(task)
     const assembly = new Assembly(cid)
     this.assemblies.set(cid, assembly)
     assembly.onBlock = () => { for (const fn of this.blockWatchers.get(cid) ?? []) fn() }
     const deadline = Date.now() + 10 * 60_000
     let delay = 1000
+    let fruitless = 0
     while (task.state === 'running' && Date.now() < deadline) {
+      const before = assembly.verified
       if (this.state.status !== 'online') {
         task.status = '网络断开，等待重连…'
         await sleep(2000, this.online)
@@ -734,6 +842,17 @@ export class PlazaNetwork {
         }
       }
       if (this.canceled.has(task.id)) break
+      fruitless = assembly.verified > before ? 0 : fruitless + 1
+      if (task.quick && fruitless >= 2) {
+        // 听听看: nobody can send it right now. Stop quietly instead of retrying for minutes,
+        // and drop the task so no error stays in the transfer panel.
+        const at = Date.now()
+        this.state.unavailable[cid] = at
+        setTimeout(() => { if (this.state.unavailable[cid] === at) delete this.state.unavailable[cid] }, UNAVAILABLE_FOR)
+        task.state = 'failed'
+        this.state.downloads = this.state.downloads.filter((d) => d.id !== task.id)
+        return
+      }
       await sleep(delay * (0.75 + Math.random() * 0.5), this.online)
       delay = Math.min(30_000, delay * 2)
     }

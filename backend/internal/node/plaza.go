@@ -225,7 +225,15 @@ func (p *Plaza) Check(env Envelope, now time.Time) (*PlazaBody, error) {
 }
 
 // Apply stores a verified announcement (or removes the peer on bye).
-func (p *Plaza) Apply(env Envelope, body *PlazaBody, now time.Time) {
+func (p *Plaza) Apply(env Envelope, body *PlazaBody, now time.Time) { p.apply(env, body, now, false) }
+
+// ApplyOffline stores a verified announcement from a peer known to be unreachable: its
+// details update, but it shows as offline (never briefly online).
+func (p *Plaza) ApplyOffline(env Envelope, body *PlazaBody, now time.Time) {
+	p.apply(env, body, now, true)
+}
+
+func (p *Plaza) apply(env Envelope, body *PlazaBody, now time.Time, offline bool) {
 	p.mu.Lock()
 	current, ok := p.records[body.PeerID]
 	if ok && body.Seq <= current.body.Seq {
@@ -241,8 +249,13 @@ func (p *Plaza) Apply(env Envelope, body *PlazaBody, now time.Time) {
 		}
 		return
 	}
-	p.records[body.PeerID] = &plazaRecord{env: env, body: *body, lastSeen: now}
-	entry := &Entry{PlazaBody: *body}
+	record := &plazaRecord{env: env, body: *body, lastSeen: now}
+	if offline {
+		record.offline = true
+		record.lastSeen = now.Add(-EntryTTL)
+	}
+	p.records[body.PeerID] = record
+	entry := &Entry{PlazaBody: *body, Offline: offline}
 	p.mu.Unlock()
 	p.publish(PlazaEvent{Entry: entry})
 }

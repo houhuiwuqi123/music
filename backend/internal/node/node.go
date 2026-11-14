@@ -108,6 +108,11 @@ func New(cfg Config) (*Node, error) {
 	if err != nil {
 		return fail(err)
 	}
+	// A browser that went away (tab frozen, network switch) stays "online" until its last
+	// announcement ages out; grey it out as soon as its only connection here is gone.
+	h.Network().Notify(&network.NotifyBundle{DisconnectedF: func(_ network.Network, c network.Conn) {
+		go n.peerGone(c.RemotePeer())
+	}})
 	h.SetStreamHandler(SignalProto, n.handleSignalStream)
 	h.SetStreamHandler(ResolveProto, n.handleResolveStream)
 	h.SetStreamHandler(SnapshotProto, n.handleSnapshotStream)
@@ -209,7 +214,69 @@ func (n *Node) readGossip(sub *pubsub.Subscription) {
 		if !ok || json.Unmarshal(msg.Data, &env) != nil {
 			continue
 		}
-		n.Plaza.Apply(env, body, time.Now())
+		if n.detached(body) {
+			n.Plaza.ApplyOffline(env, body, time.Now())
+		} else {
+			n.Plaza.Apply(env, body, time.Now())
+		}
+	}
+}
+
+// ErrNotAttached: the announcement names only this node, but the terminal has no connection
+// here, so nobody could reach it to fetch its files. It is stored as offline.
+var ErrNotAttached = errors.New("not attached")
+
+// AnnounceHTTP stores and gossips an announcement posted over HTTP (stale ones count as
+// accepted) and reports ErrNotAttached when its sender cannot actually be reached.
+func (n *Node) AnnounceHTTP(ctx context.Context, env Envelope) error {
+	body, err := n.Plaza.Check(env, time.Now())
+	if IsStale(err) {
+		// Check verified the signature before reporting it stale.
+		body = new(PlazaBody)
+		if json.Unmarshal([]byte(env.Body), body) != nil || !n.detached(body) {
+			return nil
+		}
+		n.Plaza.MarkOffline(body.PeerID, time.Now())
+		return ErrNotAttached
+	} else if err != nil {
+		return err
+	}
+	if n.detached(body) {
+		// Not gossiped: nobody could fetch from it. Stored so the page's details stay current.
+		n.Plaza.ApplyOffline(env, body, time.Now())
+		return ErrNotAttached
+	}
+	_, err = n.PublishEnvelope(ctx, env)
+	if IsStale(err) {
+		return nil
+	}
+	return err
+}
+
+// detached: an online announcement attached only through this node by a terminal that has
+// neither a libp2p connection nor a gateway session here.
+func (n *Node) detached(body *PlazaBody) bool {
+	if body.Bye {
+		return false
+	}
+	vias := body.ViaNodes()
+	for _, via := range vias {
+		if via.ID != n.Host.ID() {
+			return false
+		}
+	}
+	return len(vias) > 0 && !n.isAttached(body.PeerID)
+}
+
+func (n *Node) peerGone(id peer.ID) {
+	// Give a reconnecting browser a moment before greying it out.
+	select {
+	case <-n.ctx.Done():
+		return
+	case <-time.After(5 * time.Second):
+	}
+	if body, ok := n.Plaza.Lookup(id.String()); ok && n.detached(&body) {
+		n.Plaza.MarkOffline(body.PeerID, time.Now())
 	}
 }
 

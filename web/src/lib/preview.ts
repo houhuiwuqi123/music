@@ -52,7 +52,7 @@ export class WebPreview {
       this.start(done.url)
       return
     }
-    void this.net.download(file.cid, { name: file.name, size: file.size, from }) // no-op if already running
+    void this.net.download(file.cid, { name: file.name, size: file.size, from, quick: true }) // no-op if already running
     const mime = STREAM_MIME[extension(file.name)]
     if (mime && typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime)) this.stream(file.cid, mime)
     else this.whenComplete(file.cid)
@@ -115,6 +115,9 @@ export class WebPreview {
       if (state === 'complete' && task?.url) {
         stop()
         this.start(task.url)
+      } else if (this.net.state.unavailable[cid]) {
+        stop()
+        this.stop() // nobody can send it: no error, the button shows 不可传输
       } else if (state === 'failed' || state === 'canceled') {
         stop()
         this.fail(task?.status ?? '下载失败')
@@ -166,6 +169,7 @@ export class WebPreview {
       this.cleanup.push(this.net.watchBlocks(cid, () => void pump()))
       const stop = watch(() => this.task(cid)?.state, (state) => {
         if (state === 'complete') void pump()
+        else if (this.net.state.unavailable[cid]) this.stop() // nobody can send it: no error, button shows 不可传输
         else if (state === 'failed' || state === 'canceled') this.fail(this.task(cid)?.status ?? '下载失败')
       })
       this.cleanup.push(stop)

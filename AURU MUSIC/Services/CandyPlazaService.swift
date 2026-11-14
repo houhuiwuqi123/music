@@ -292,6 +292,8 @@ final class CandyPlazaService: ObservableObject {
     @Published private(set) var nickname: String
     @Published private(set) var avatar: String?
     @Published private(set) var peerID = ""
+    /// Files 听听看 found nobody able to send (file ID → when it gave up); cleared after a minute.
+    @Published private(set) var unavailableFiles: [String: Date] = [:]
     /// Listen-while-downloading player for plaza songs.
     let preview = CandyPreviewPlayer()
 
@@ -386,6 +388,18 @@ final class CandyPlazaService: ObservableObject {
                 self.preview.downloadStatus(file.id, message)
             } else {
                 self.errorMessage = message
+            }
+        }
+        engine.unavailable = { [weak self] file in
+            guard let self else { return }
+            // No error panel or alert: the transfer task disappears and the button shows 不可传输.
+            self.downloads.removeValue(forKey: file.id)
+            if self.preview.file?.id == file.id { self.preview.stop() }
+            let at = Date()
+            self.unavailableFiles[file.id] = at
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                if self?.unavailableFiles[file.id] == at { self?.unavailableFiles.removeValue(forKey: file.id) }
             }
         }
         engine.publicationUnavailable = { [weak self] cid in
@@ -774,7 +788,7 @@ final class CandyPlazaService: ObservableObject {
             let geo = body.geo.flatMap { $0.count == 2 && abs($0[0]) <= 90 && abs($0[1]) <= 180 ? $0 : nil }
                 ?? body.region.flatMap { regionGeo($0) }
             return CandyPlazaListening(clientId: body.peerId, ownerName: body.name, title: title,
-                artist: body.listening?.artist ?? (body.client == "web" ? "网页端" : ""),
+                artist: body.listening?.artist ?? "",
                 isPlaying: body.listening?.isPlaying ?? (shared != nil), region: body.region,
                 latitude: geo?[0], longitude: geo?[1], file: file, avatar: body.avatar,
                 offlineAt: offlineAt)
@@ -955,6 +969,7 @@ final class CandyPlazaService: ObservableObject {
             errorMessage = "广场连接断开，请连接后重试。"
             return
         }
+        unavailableFiles.removeValue(forKey: file.id)
         transfers.download(file)
     }
 
@@ -968,8 +983,9 @@ final class CandyPlazaService: ObservableObject {
             errorMessage = "广场连接断开，请连接后重试。"
             return
         }
+        unavailableFiles.removeValue(forKey: file.id)
         preview.stream(file, partial: transfers.partialURL(for: file), available: transfers.verifiedBytes(file.id) ?? 0)
-        if !transfers.isDownloading(file.id) { transfers.download(file) }
+        if !transfers.isDownloading(file.id) { transfers.download(file, quick: true) }
     }
 
     func localCopy(of file: CandyPlazaFile) -> URL? {
@@ -981,7 +997,10 @@ final class CandyPlazaService: ObservableObject {
         transfers.cancel(fileID)
         if let current = preview.file, current.id == fileID, localCopy(of: current) == nil { preview.stop() }
     }
-    func retryDownload(_ file: CandyPlazaFile) { transfers.download(file) }
+    func retryDownload(_ file: CandyPlazaFile) {
+        unavailableFiles.removeValue(forKey: file.id)
+        transfers.download(file)
+    }
     func clearDownloadPartial(_ file: CandyPlazaFile) {
         if preview.file?.id == file.id { preview.stop() }
         transfers.clearPartial(file)

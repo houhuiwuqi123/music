@@ -317,6 +317,7 @@ struct CandyPlazaView: View {
                 CandyListenerRow(
                     listener: listener,
                     transfer: listener.file.flatMap { plaza.downloads[$0.id] },
+                    unavailable: listener.file.map { plaza.unavailableFiles[$0.id] != nil } ?? false,
                     preview: plaza.preview,
                     locate: Self.placeKey(listener).map { key -> () -> Void in { withAnimation { selectedPlace = key } } },
                     listen: {
@@ -483,6 +484,8 @@ struct CandyPlazaView: View {
 private struct CandyListenerRow: View {
     let listener: CandyPlazaListening
     let transfer: CandyPlazaDownload?
+    /// 听听看 found nobody able to send this file just now.
+    let unavailable: Bool
     let preview: CandyPreviewPlayer
     let locate: (() -> Void)?
     let listen: () -> Void
@@ -520,6 +523,7 @@ private struct CandyListenerRow: View {
                 preview: preview,
                 fileID: listener.file?.id,
                 isSong: listener.file.map { CandyListenButton.isSong($0.name) } ?? true,
+                unavailable: unavailable && !isDownloaded,
                 enabled: listener.file != nil && (!listener.isOffline || isDownloaded),
                 listen: listen
             )
@@ -567,6 +571,8 @@ private struct CandyListenButton: View {
     let fileID: String?
     /// False for files that are not audio (video, documents…): the button is greyed out.
     let isSong: Bool
+    /// Nobody could send the file just now: greyed out as 不可传输 for a minute.
+    let unavailable: Bool
     let enabled: Bool
     let listen: () -> Void
 
@@ -574,7 +580,7 @@ private struct CandyListenButton: View {
         LocalMusicLibrary.supportedAudioExtensions.contains(URL(fileURLWithPath: name).pathExtension.lowercased())
     }
 
-    private var usable: Bool { isSong && (enabled || isCurrent) }
+    private var usable: Bool { isSong && (isCurrent || (enabled && !unavailable)) }
 
     private var isCurrent: Bool { fileID != nil && preview.file?.id == fileID }
 
@@ -597,6 +603,8 @@ private struct CandyListenButton: View {
                     ProgressView().controlSize(.mini).tint(.purple)
                 } else if isCurrent {
                     CandyEqualizer(animating: preview.phase == .playing)
+                } else if unavailable {
+                    Text("不可传输")
                 } else {
                     Label("听听看", systemImage: "play.fill")
                 }

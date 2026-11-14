@@ -326,18 +326,29 @@ func TestHTTPAnnounce(t *testing.T) {
 		return resp.StatusCode, out
 	}
 	env := envelope(key, body)
-	if code, out := post(env); code != 200 || out["ok"] != true {
+	// The sender names this node but has no connection to it: stored, but offline.
+	if code, out := post(env); code != 409 || out["error"] != "not attached" {
 		t.Fatalf("announce: %d %v", code, out)
 	}
-	if code, _ := post(env); code != 200 {
-		t.Fatalf("resend should be accepted as stale, got %d", code)
+	if code, _ := post(env); code != 409 {
+		t.Fatalf("resend should be treated as stale and still not attached, got %d", code)
 	}
 	found := false
 	for _, e := range n.Plaza.Entries() {
-		found = found || (e.PeerID == id.String() && len(e.Files) == 1)
+		found = found || (e.PeerID == id.String() && len(e.Files) == 1 && e.Offline)
 	}
 	if !found {
-		t.Fatal("announcement not stored")
+		t.Fatal("announcement not stored as offline")
+	}
+	// Announcing through another node is not judged here.
+	other := body
+	_, otherKey, _ := ed25519.GenerateKey(rand.Reader)
+	otherPub, _ := crypto.UnmarshalEd25519PublicKey(otherKey.Public().(ed25519.PublicKey))
+	otherNode, _ := peer.IDFromPublicKey(otherPub)
+	other.Via = []string{"/ip4/203.0.113.9/tcp/4001/p2p/" + otherNode.String()}
+	other.Seq = time.Now().UnixMilli() + 1
+	if code, out := post(envelope(key, other)); code != 200 || out["ok"] != true {
+		t.Fatalf("announce via another node: %d %v", code, out)
 	}
 	body.Seq = time.Now().Add(time.Hour).UnixMilli()
 	if code, out := post(envelope(key, body)); code != 400 || !strings.Contains(out["error"].(string), "clock") {
