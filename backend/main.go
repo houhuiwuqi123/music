@@ -61,7 +61,7 @@ func main() {
 
 	ice := iceProvider(split(os.Getenv("STUN_URLS")), split(os.Getenv("TURN_URLS")), os.Getenv("TURN_REST_SECRET"))
 	region := func(r *http.Request) (string, []float64) {
-		value, geo, err := regions.Locate(geoip.ClientIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), proxies))
+		value, geo, err := regions.Locate(geoip.RequestIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), r.Header.Get("CF-Connecting-IP"), proxies))
 		if err != nil || value == "" {
 			return "地区未知", nil
 		}

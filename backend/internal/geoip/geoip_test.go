@@ -27,6 +27,25 @@ func TestTrustedProxyClientIP(t *testing.T) {
 	}
 }
 
+func TestCloudflareRequestIP(t *testing.T) {
+	proxies, _ := ParseTrustedProxies("127.0.0.1/32,::1/128")
+	for _, test := range []struct{ remote, forwarded, cf, want string }{
+		// nginx: X-Forwarded-For $remote_addr (the Cloudflare edge) + CF-Connecting-IP passed through
+		{"127.0.0.1:5000", "172.70.1.2", "8.8.8.8", "8.8.8.8"},
+		// nginx: $proxy_add_x_forwarded_for
+		{"127.0.0.1:5000", "8.8.8.8, 2606:4700::1", "8.8.8.8", "8.8.8.8"},
+		// not from Cloudflare: a forged header is ignored
+		{"127.0.0.1:5000", "203.0.113.10", "8.8.8.8", "203.0.113.10"},
+		{"203.0.113.10:5000", "", "8.8.8.8", "203.0.113.10"},
+		// nginx real_ip already resolved the visitor
+		{"127.0.0.1:5000", "8.8.4.4", "8.8.4.4", "8.8.4.4"},
+	} {
+		if got := RequestIP(test.remote, test.forwarded, test.cf, proxies).String(); got != test.want {
+			t.Fatalf("%+v: got %s, want %s", test, got, test.want)
+		}
+	}
+}
+
 func TestUnknownAndInvalidDatabase(t *testing.T) {
 	resolver, err := Open("")
 	if err != nil {

@@ -137,6 +137,11 @@ cmd_check() {
   fi
   curl -fsS --max-time 5 "http://$HTTP_ADDR/api/ice" >/dev/null && info "/api/ice 正常" || { warn "/api/ice 异常"; ok=1; }
   check_geoip
+  if [ -f /www/server/panel/vhost/nginx/extension/music.webtrc.eu.cc/cloudflare_realip.conf ]; then
+    info "nginx 已为 music.webtrc.eu.cc 配置 Cloudflare 真实 IP"
+  else
+    warn "nginx 未配置 Cloudflare 真实 IP，开橙云后地区会显示成 CF 机房：sudo ./extension/cloudflare-realip.sh install"
+  fi
   return $ok
 }
 
