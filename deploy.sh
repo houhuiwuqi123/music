@@ -31,12 +31,48 @@ build_backend() {
   (cd "$REPO_DIR/backend" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o server.build .)
 }
 
+# nvm 只在交互 shell 里把 node 加进 PATH，sudo 还会把 PATH 重置成 secure_path，
+# 所以 command -v 找不到时去 nvm 目录里找：$NVM_DIR、sudo 之前那个用户的 ~/.nvm、
+# 当前用户的 ~/.nvm，取已安装的最高版本加进 PATH
+find_node() {
+  command -v npm >/dev/null 2>&1 && return 0
+  local dirs=() d home bin
+  [ -n "${NVM_DIR:-}" ] && dirs+=("$NVM_DIR")
+  if [ -n "${SUDO_USER:-}" ] && home="$(getent passwd "$SUDO_USER" | cut -d: -f6)" && [ -n "$home" ]; then
+    dirs+=("$home/.nvm")
+  fi
+  dirs+=("$HOME/.nvm" /usr/local/nvm /opt/nvm)
+  for d in "${dirs[@]}"; do
+    bin="$(ls -d "$d"/versions/node/v*/bin 2>/dev/null | sort -V | tail -n 1 || true)"
+    if [ -n "$bin" ] && [ -x "$bin/npm" ] && [ -x "$bin/node" ]; then
+      export PATH="$bin:$PATH"
+      info "使用 nvm 安装的 Node.js：$bin"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Vite 要求 Node.js ^20.19.0 || >=22.12.0
+node_version_ok() {
+  local v major minor
+  v="$(node -v 2>/dev/null)" || return 1
+  v="${v#v}"; major="${v%%.*}"; minor="${v#*.}"; minor="${minor%%.*}"
+  [ "$major" -eq 20 ] && [ "$minor" -ge 19 ] && return 0
+  [ "$major" -eq 22 ] && [ "$minor" -ge 12 ] && return 0
+  [ "$major" -ge 23 ]
+}
+
 build_web() {
-  if ! command -v npm >/dev/null 2>&1; then
-    warn "未找到 npm，跳过网页构建（需要 Node.js 20.19+ 或 22.12+）"
+  if ! find_node; then
+    warn "未找到 npm（PATH 与 ~/.nvm 中都没有），跳过网页构建（需要 Node.js 20.19+ 或 22.12+）"
     return 0
   fi
-  info "构建网页 → web/dist"
+  if ! node_version_ok; then
+    warn "Node.js $(node -v 2>/dev/null || echo '?')（$(command -v node)）版本过低，跳过网页构建（需要 20.19+ 或 22.12+）"
+    return 0
+  fi
+  info "构建网页 → web/dist（Node.js $(node -v)）"
   (cd "$REPO_DIR/web" && npm ci --no-audit --no-fund && npm run build)
 }
 
