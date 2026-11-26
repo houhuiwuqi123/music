@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, type Ref } from 'vue'
 import { PlazaNetwork, type PlazaEntry } from './lib/network.ts'
 import type { PlazaFile } from './lib/plaza.ts'
 import { WebPreview, isSong } from './lib/preview.ts'
@@ -20,7 +20,31 @@ onMounted(() => {
   net.start().catch((error: Error) => { s.error = `网络启动失败：${error.message}` })
 })
 
-const statusText = computed(() => ({ online: '在线', connecting: '连线中', offline: '离线' })[s.status])
+/**
+ * Follows `source`, but a change from a good value to a bad one only shows once it has lasted
+ * `ms`. Cloudflare / nginx close the node WebSocket now and then and the page redials within a
+ * second or two; that should not flash 连线中 or the "连接已失效" banner. Real outages still show.
+ */
+function settled<T>(source: () => T, good: (value: T) => boolean, ms = 6000): Ref<T> {
+  const shown = ref(source()) as Ref<T>
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let pending: T
+  watch(source, (value) => {
+    if (good(value) || !good(shown.value)) {
+      clearTimeout(timer)
+      timer = undefined
+      shown.value = value
+      return
+    }
+    pending = value // keep the first deadline when a bad value turns into another bad value
+    timer ??= setTimeout(() => { timer = undefined; shown.value = pending }, ms)
+  })
+  return shown
+}
+
+const shownStatus = settled(() => s.status, (v) => v === 'online')
+const shownNotice = settled(() => s.notice, (v) => !v)
+const statusText = computed(() => ({ online: '在线', connecting: '连线中', offline: '离线' })[shownStatus.value])
 
 const entries = computed(() => {
   const q = query.value.trim().toLowerCase()
@@ -110,7 +134,7 @@ const downloading = (cid: string) => s.downloads.some((d) => d.cid === cid && d.
 const unavailable = (cid: string) => !!s.unavailable[cid] && !downloaded(cid)
 // When 听听看 gives up on a file, its earlier error message goes too.
 watch(() => Object.keys(s.unavailable).length, () => { if (s.error.startsWith('听听看：')) s.error = '' })
-const sharing = computed(() => s.status === 'online' && s.reachable)
+const sharing = settled(() => s.status === 'online' && s.reachable, (v) => v)
 </script>
 
 <template>
@@ -130,7 +154,7 @@ const sharing = computed(() => s.status === 'online' && s.reachable)
           <button @click="saveName">保存</button>
         </template>
         <button v-else class="name" title="修改昵称" @click="nameDraft = s.name; editingName = true">{{ s.name }}</button>
-        <span class="status" :class="s.status"><i />{{ statusText }}</span>
+        <span class="status" :class="shownStatus"><i />{{ statusText }}</span>
       </div>
     </header>
 
@@ -141,7 +165,7 @@ const sharing = computed(() => s.status === 'online' && s.reachable)
     </p>
 
     <div v-if="s.error" class="error" @click="s.error = ''">{{ s.error }}</div>
-    <div v-if="s.notice" class="notice">{{ s.notice }}</div>
+    <div v-if="shownNotice" class="notice">{{ shownNotice }}</div>
 
     <section class="grid">
       <div class="col">
@@ -150,7 +174,7 @@ const sharing = computed(() => s.status === 'online' && s.reachable)
             <input v-model="query" type="text" placeholder="搜索用户名、歌曲名或地区…" />
           </div>
           <p v-if="!entries.length" class="empty">
-            {{ s.status === 'online' ? '暂时没有其他在线用户。打开 iOS 端播放歌曲，或在右侧分享文件。' : '正在连接引导节点…' }}
+            {{ shownStatus === 'online' ? '暂时没有其他在线用户。打开 iOS 端播放歌曲，或在右侧分享文件。' : '正在连接引导节点…' }}
           </p>
           <article v-for="e in entries" :key="e.body.peerId" class="peer" :class="{ offline: e.offline }">
             <img v-if="e.body.avatar" class="avatar" :src="`data:image/jpeg;base64,${e.body.avatar}`" alt="" />

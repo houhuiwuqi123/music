@@ -21,6 +21,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	yamux "github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	ma "github.com/multiformats/go-multiaddr"
 )
@@ -63,6 +64,7 @@ func New(cfg Config) (*Node, error) {
 		// DHT provider records carry an address that points at this node.
 		libp2p.EnableRelayService(relay.WithResources(relay.DefaultResources())),
 		libp2p.ForceReachabilityPublic(),
+		libp2p.Muxer(yamux.ID, patientYamux()),
 	}
 	if len(cfg.Announce) > 0 {
 		announce := make([]ma.Multiaddr, 0, len(cfg.Announce))
@@ -120,6 +122,19 @@ func New(cfg Config) (*Node, error) {
 	go n.maintain(bootstrap)
 	n.log.Printf("peer %s listening on %v", h.ID(), n.Addrs())
 	return n, nil
+}
+
+// patientYamux is go-libp2p's yamux with a longer wait for keepalive pongs. Stock yamux pings
+// a connection that has been quiet for 30 s and closes it if the pong is not back within
+// ConnectionWriteTimeout (10 s). Browsers reach the node through Cloudflare + nginx, and a
+// background tab, a busy page or a lossy mobile link often answers later than that: each
+// such close showed as a brief 连线中 on the page, and announcements posted before the page
+// noticed got 409 (not attached). 45 s still drops a dead link within ~75 s, the same
+// limit as the iOS gateway socket.
+func patientYamux() *yamux.Transport {
+	config := *yamux.DefaultTransport
+	config.ConnectionWriteTimeout = 45 * time.Second
+	return &config
 }
 
 func (n *Node) Close() error {
