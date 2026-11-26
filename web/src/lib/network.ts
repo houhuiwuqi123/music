@@ -31,6 +31,8 @@ const ENTRY_TTL = 90_000
 const OFFLINE_RETENTION = 60_000
 const ANNOUNCE_EVERY = 30_000
 const LINK_CHECK_EVERY = 20_000
+/** checkLinks drops a node link only after this many pings in a row went unanswered. */
+const PING_MISSES_ALLOWED = 3
 /** How long a file that could not be fetched stays marked "不可传输". */
 const UNAVAILABLE_FOR = 60_000
 const MAX_UPLOADS = 3
@@ -155,6 +157,8 @@ export class PlazaNetwork {
   private checkFiles: string | null = null
   private blockWatchers = new Map<string, Set<() => void>>()
   private relinking = false
+  /** Consecutive failed pings per node (checkLinks). */
+  private pingMisses = new Map<string, number>()
 
   private nodeURL: string
 
@@ -191,6 +195,10 @@ export class PlazaNetwork {
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
       connectionGater: { denyDialMultiaddr: () => false },
+      // The built-in monitor aborts a connection after ONE ping slower than ~5 s. Behind
+      // Cloudflare + nginx a single slow round trip is routine, and every abort shows as a brief
+      // 离线. Keep it for RTT only; checkLinks decides when a link is really dead.
+      connectionMonitor: { abortConnectionOnPingFailure: false },
       services: {
         identify: identify(),
         ping: ping(),
@@ -213,10 +221,13 @@ export class PlazaNetwork {
     })
     libp2p.addEventListener('peer:disconnect', (evt) => {
       const id = evt.detail.toString()
+      this.pingMisses.delete(id)
       if (this.connectedNodes.delete(id)) {
         this.state.nodes = [...this.connectedNodes.keys()]
         if (this.connectedNodes.size === 0) {
-          this.state.status = 'offline'
+          // Cloudflare / nginx reloads close WebSockets now and then; we redial right away, so
+          // show 连线中 rather than 离线 (connect() reports 离线 if the redial fails).
+          this.state.status = 'connecting'
           this.scheduleReconnect()
         }
       }
@@ -329,19 +340,34 @@ export class PlazaNetwork {
     }, 4000)
   }
 
-  /** Pings each node; a connection that does not answer is dropped so the page reconnects. */
-  private async checkLinks(): Promise<boolean> {
+  /**
+   * Pings each node; a connection that is gone, or misses `tolerance` pings in a row, is dropped
+   * so the page reconnects. One slow ping through Cloudflare/nginx is not a dead link.
+   */
+  private async checkLinks(tolerance = PING_MISSES_ALLOWED): Promise<boolean> {
     const libp2p = this.libp2p
     if (!libp2p || this.connectedNodes.size === 0 || this.relinking) return false
     const ping = libp2p.services.ping as { ping(peer: unknown, options: { signal: AbortSignal }): Promise<number> }
     let healthy = 0
     await Promise.all([...this.connectedNodes.keys()].map(async (id) => {
       const peer = peerIdFromString(id)
+      if (!libp2p.getConnections(peer).length) {
+        this.pingMisses.delete(id)
+        this.connectedNodes.delete(id)
+        return
+      }
       try {
-        if (!libp2p.getConnections(peer).length) throw new Error('no connection')
-        await ping.ping(peer, { signal: AbortSignal.timeout(6000) })
+        await ping.ping(peer, { signal: AbortSignal.timeout(10_000) })
+        this.pingMisses.delete(id)
         healthy++
-      } catch {
+      } catch (error) {
+        const misses = (this.pingMisses.get(id) ?? 0) + 1
+        if (misses < tolerance) {
+          this.pingMisses.set(id, misses)
+          console.warn(`node ping missed (${misses}/${tolerance})`, id, error)
+          return
+        }
+        this.pingMisses.delete(id)
         this.connectedNodes.delete(id)
         await libp2p.hangUp(peer).catch(() => undefined)
       }
@@ -367,7 +393,8 @@ export class PlazaNetwork {
       await this.connect()
       return
     }
-    if (await this.checkLinks()) {
+    // Shown again after being hidden: a link that cannot answer now is most likely stale.
+    if (await this.checkLinks(1)) {
       this.checkFiles = null // confirm the node still lists our files as reachable
       await this.announce()
     }
