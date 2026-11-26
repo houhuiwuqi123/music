@@ -1,0 +1,23 @@
+1.根目录新增deploy.sh(生产环境)用来部署，使之达到以下的效果：
+  ./deploy.sh build [all|backend|web|frontadmin]   编译（默认 all）
+  ./deploy.sh install                   编译并安装：二进制、网页、systemd 服务；若服务在运行则重启(自动覆盖最新的，且重启服务)
+  ./deploy.sh start | stop | restart    控制 systemd 服务
+  ./deploy.sh status                    服务状态 + 监听端口
+  ./deploy.sh logs [行数]               跟踪日志（默认最近 100 行）
+  ./deploy.sh check                     自检：本机 API、bootstrap 列表、端口、GeoIP 文件
+ ，其中./deploy.sh status的效果是：
+ ./deploy.sh status
+
+xxxx系统 · 服务状态（systemd）   API 端口 8002
+        目录 /www/wwwroot/stock   配置 /www/wwwroot/xxx/backend/manifest/config   运行用户 stock   回测实例 2
+----------------------------------------------------------------------------------------
+  stock-api                运行中  PID 88291   内存 14 MB    启动于 2026-11-08 22:13:07
+  stock-worker             运行中  PID 88300   内存 301 MB   启动于 2026-11-08 22:13:09
+  stock-backtest@1         运行中  PID 88309   内存 14 MB    启动于 2026-11-08 22:13:09
+  stock-backtest@2         运行中  PID 88318   内存 13 MB    启动于 2026-11-08 22:13:09
+----------------------------------------------------------------------------------------
+        前端：/www/wwwroot/stock/frontadmin/dist（构建于 2026-11-08 22:13:30），由 Nginx 托管
+        日志：./deploy.sh logs <api|worker|backtest> [-f]，框架日志 /www/wwwroot/stock/backend/resource/log
+
+1.根目录新增 local.sh(开发环境)，使之能达到一样或者类似的效果，其中命令只保留  ./local.sh start | stop | restart |status   即可。
+最后注意：如果golang作为后端语言，可执行程序要在本地编译完成(但是部署脚本作为辅助仍然支持编译安装，且要考虑不榨干服务器CPU和内存)，如果是php作为后端语言，不用执行 composer命令。同时要给deploy.sh文件+x权限
