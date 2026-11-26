@@ -28,15 +28,18 @@ Kademlia 只接受“自己宣告自己”的 provider 记录（`handleAddProvid
 
 ## 部署（服务器）
 
-仓库根目录的 `deploy.sh` 负责编译、安装和服务管理（需要 root，默认安装目录 `/www/wwwroot/webtrc`）：
+仓库根目录的 `deploy.sh` 负责编译、安装和服务管理（需要 root，默认安装目录 `/www/wwwroot/webtrc`）。节点二进制在开发机上编译好再提交，服务器上不用编译 Go：
 
 ```bash
-sudo ./deploy.sh install     # 编译节点和网页，安装二进制、web/dist、systemd 服务（运行中则自动重启）
+./deploy.sh build backend    # 开发机：交叉编译 → backend/bin/webtrc-linux-amd64 + .src 源码指纹，然后提交
+sudo ./deploy.sh install     # 服务器：安装二进制（与源码指纹不一致时才在服务器上低优先级编译）、构建 web/dist、systemd 服务（运行中则自动重启）
 sudo ./deploy.sh start|stop|restart
 ./deploy.sh status           # 服务状态和监听端口
-./deploy.sh logs             # 跟踪日志
-./deploy.sh check            # 自检 /api/bootstrap、/api/ice、GeoIP 文件
+./deploy.sh logs [行数]      # 跟踪日志
+./deploy.sh check            # 自检：本机 API、bootstrap 列表、端口、GeoIP 文件
 ```
+
+本地开发用根目录的 `local.sh`（Windows 上在 Git Bash 里运行）：`./local.sh start|stop|restart|status`。它在本地编译节点并启动在 127.0.0.1:8003 / 4002，同时启动 Vite（http://127.0.0.1:5173，`/api` 代理到节点），运行文件放在 `.local/`。
 
 域名说明：`music.webtrc.eu.cc` 走 Cloudflare 代理，承载网页、API、iOS 网关和浏览器的 libp2p wss（nginx 模板 `deploy/nginx.conf`）；默认是单节点，只有这一个域名，不对外开放其他端口。以后增加节点时才需要 `p2p.webtrc.eu.cc`（仅 DNS 记录，tcp/udp 4001），见 [deploy/p2p-domain.md](deploy/p2p-domain.md)。
 
