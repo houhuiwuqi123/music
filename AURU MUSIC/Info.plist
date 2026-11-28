@@ -28,6 +28,10 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSLocationDefaultAccuracyReduced</key>
+	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>AURU MUSIC 只使用大致位置，在 Candy 广场地图上标出你所在的城市，不会获取或分享精确位置。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>AURU MUSIC uses the microphone only while identifying music around you.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

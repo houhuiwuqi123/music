@@ -159,6 +159,11 @@ export class PlazaNetwork {
   private relinking = false
   /** Consecutive failed pings per node (checkLinks). */
   private pingMisses = new Map<string, number>()
+  /** The checkLinks run in progress (interval and revive() share it instead of pinging twice). */
+  private checking?: Promise<boolean>
+  /** The announcement being sent, and whether another was asked for meanwhile (announce()). */
+  private announcing?: Promise<void>
+  private announceAgain = false
 
   private nodeURL: string
 
@@ -201,7 +206,11 @@ export class PlazaNetwork {
       connectionMonitor: { abortConnectionOnPingFailure: false },
       services: {
         identify: identify(),
-        ping: ping(),
+        // The connection monitor (every 10 s) and checkLinks both ping the node. With the default
+        // limit of ONE outbound ping stream per connection they collide, which logged "Too many
+        // outbound protocol streams for protocol /ipfs/ping/1.0.0 - 2/1" and counted as a missed
+        // ping. Background tabs fire throttled timers together, so it happened all the time there.
+        ping: ping({ maxOutboundStreams: 4 }),
         dht: kadDHT({ protocol: DHT_PROTOCOL, clientMode: true, peerInfoMapper: (p) => p }),
         pubsub: gossipsub({ allowPublishToZeroTopicPeers: true, emitSelf: false }),
       },
@@ -344,7 +353,14 @@ export class PlazaNetwork {
    * Pings each node; a connection that is gone, or misses `tolerance` pings in a row, is dropped
    * so the page reconnects. One slow ping through Cloudflare/nginx is not a dead link.
    */
-  private async checkLinks(tolerance = PING_MISSES_ALLOWED): Promise<boolean> {
+  private checkLinks(tolerance = PING_MISSES_ALLOWED): Promise<boolean> {
+    if (this.checking) return this.checking
+    const run = this.pingLinks(tolerance).finally(() => { this.checking = undefined })
+    this.checking = run
+    return run
+  }
+
+  private async pingLinks(tolerance: number): Promise<boolean> {
     const libp2p = this.libp2p
     if (!libp2p || this.connectedNodes.size === 0 || this.relinking) return false
     const ping = libp2p.services.ping as { ping(peer: unknown, options: { signal: AbortSignal }): Promise<number> }
@@ -548,6 +564,7 @@ export class PlazaNetwork {
     }
     if (error.includes('clock') && typeof reply.time === 'number' && !retried) {
       this.clockOffset = reply.time - Date.now()
+      this.lastSeq = 0 // a seq that ran ahead with the old offset would be rejected again
       const env = JSON.parse(text) as Envelope
       const body = JSON.parse(env.body) as PlazaBody
       body.seq = this.nextSeq()
@@ -570,7 +587,31 @@ export class PlazaNetwork {
     return this.lastSeq
   }
 
-  async announce(bye = false) {
+  /**
+   * Heartbeat, reconnect, rename, upload… all announce. Two at once made the node compare two
+   * seqs mid-flight; send one at a time and fold the requests made meanwhile into one more.
+   */
+  announce(bye = false): Promise<void> {
+    if (bye) return this.sendAnnouncement(true)
+    if (this.announcing) {
+      this.announceAgain = true
+      return this.announcing
+    }
+    const run = (async () => {
+      try {
+        do {
+          this.announceAgain = false
+          await this.sendAnnouncement(false)
+        } while (this.announceAgain)
+      } finally {
+        this.announcing = undefined
+      }
+    })()
+    this.announcing = run
+    return run
+  }
+
+  private async sendAnnouncement(bye: boolean) {
     if (!this.libp2p || !this.key || (this.connectedNodes.size === 0 && !bye)) return
     const files: PlazaFile[] = [...this.sources.values()].map((s) => ({
       cid: s.manifest.cid, name: s.name, size: s.manifest.size, sha256: s.manifest.sha256, kind: 'upload', mime: s.mime || undefined,

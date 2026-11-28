@@ -308,6 +308,13 @@ func (n *Node) PublishEnvelope(ctx context.Context, env Envelope) (*PlazaBody, e
 	// Publish validates locally (rejecting replays) and works with zero topic peers;
 	// apply right away so the cache does not depend on the subscription loop timing.
 	if err := n.topic.Publish(ctx, data); err != nil {
+		// A newer announcement from the same terminal (sent concurrently, or its own gossip copy)
+		// was stored between Check and Publish, so the validator ignored this one: it is stale,
+		// not invalid. Reporting it as an error made /api/announce answer 400 "validation ignored".
+		var invalid pubsub.ValidationError
+		if errors.As(err, &invalid) && invalid.Reason == pubsub.RejectValidationIgnored {
+			return nil, errStale
+		}
 		return nil, err
 	}
 	n.Plaza.Apply(env, body, time.Now())

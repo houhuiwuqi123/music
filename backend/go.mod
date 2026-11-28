@@ -8,6 +8,7 @@ require (
 	github.com/libp2p/go-libp2p v0.51.0
 	github.com/libp2p/go-libp2p-kad-dht v0.43.0
 	github.com/libp2p/go-libp2p-pubsub v0.19.0
+	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20261124061657-f1781b7f9b7a
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multihash v0.2.3
 	github.com/oschwald/maxminddb-golang v1.13.1

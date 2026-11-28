@@ -265,6 +265,101 @@ enum CandyCodec {
     }
 }
 
+// MARK: - City location
+
+/// The phone's own city for the plaza map, from an approximate (city-level) Core Location fix.
+/// The node can only look up the IP address, and Chinese mobile carriers route many phones
+/// through a provincial gateway: the lookup then lands in another city, or only says 中国 and
+/// puts the user in the middle of the country. Only reduced accuracy is asked for (Info.plist
+/// NSLocationDefaultAccuracyReduced), and coordinates are rounded to 0.1° like the node's.
+@MainActor
+final class CandyCityLocator: NSObject, CLLocationManagerDelegate {
+    struct Place: Equatable {
+        var region: String
+        var geo: [Double]
+    }
+
+    var onUpdate: (@MainActor (Place) -> Void)?
+    private(set) var place: Place?
+    private let manager = CLLocationManager()
+    private let geocoder = CLGeocoder()
+    private var resolvedAt: CLLocation?
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyReduced
+    }
+
+    /// Asks for permission the first time (approximate location only), else refreshes the fix.
+    func request() {
+        switch manager.authorizationStatus {
+        case .notDetermined: manager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse, .authorizedAlways: manager.requestLocation()
+        default: break // denied or restricted: the node's IP lookup is used
+        }
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor in
+            let status = self.manager.authorizationStatus
+            if status == .authorizedWhenInUse || status == .authorizedAlways { self.manager.requestLocation() }
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else { return }
+        Task { @MainActor in self.resolve(location) }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        // No fix this time (indoors, airplane mode…): keep the last city or the IP lookup.
+    }
+
+    private func resolve(_ location: CLLocation) {
+        // Still in the same city: no need to geocode again.
+        if place != nil, let resolvedAt, resolvedAt.distance(from: location) < 5_000 { return }
+        guard !geocoder.isGeocoding else { return }
+        let geo = [(location.coordinate.latitude * 10).rounded() / 10, (location.coordinate.longitude * 10).rounded() / 10]
+        geocoder.reverseGeocodeLocation(location, preferredLocale: Locale(identifier: "zh_CN")) { [weak self] placemarks, _ in
+            let mark = placemarks?.first
+            let region = mark.flatMap { Self.describe(country: $0.country, isoCode: $0.isoCountryCode,
+                province: $0.administrativeArea, city: $0.locality ?? $0.subAdministrativeArea) }
+            Task { @MainActor in
+                guard let self, let region else { return }
+                let place = Place(region: String(region.prefix(64)), geo: geo)
+                self.resolvedAt = location
+                guard place != self.place else { return }
+                self.place = place
+                self.onUpdate?(place)
+            }
+        }
+    }
+
+    /// Same wording as the node: 中国 "省份-城市" (广东-深圳, 北京), elsewhere "国家-城市".
+    nonisolated static func describe(country: String?, isoCode: String?, province: String?, city: String?) -> String? {
+        func clean(_ value: String?) -> String { (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        if isoCode?.uppercased() == "CN" {
+            func trim(_ value: String?) -> String {
+                var name = clean(value)
+                for suffix in ["省", "市"] where name.hasSuffix(suffix) && name.count > suffix.count {
+                    name.removeLast(suffix.count)
+                }
+                return name
+            }
+            let province = trim(province), city = trim(city)
+            if !province.isEmpty && !city.isEmpty && city != province { return "\(province)-\(city)" }
+            if !province.isEmpty { return province }
+            if !city.isEmpty { return city }
+            return clean(country).isEmpty ? nil : clean(country)
+        }
+        let country = clean(country)
+        let detail = clean(city).isEmpty ? clean(province) : clean(city)
+        if country.isEmpty { return detail.isEmpty ? nil : detail }
+        return detail.isEmpty || detail == country ? country : "\(country)-\(detail)"
+    }
+}
+
 // MARK: - Service
 
 @MainActor
@@ -310,6 +405,8 @@ final class CandyPlazaService: ObservableObject {
     private var node: CandyNodeInfo?
     private var region: String?
     private var geo: [Double]?
+    /// The phone's own city (Core Location); preferred over the node's IP lookup when allowed.
+    private let cityLocator = CandyCityLocator()
     private var iceServers: [CandyICEServer] = [CandyICEServer(urls: ["stun:stun.l.google.com:19302"])]
     private var bootstrapNodes: [CandyNodeInfo] = []
     private var nodeIndex = 0
@@ -439,6 +536,7 @@ final class CandyPlazaService: ObservableObject {
         // Rows show which song is being previewed; forward only that (not the playback clock).
         previewFileObserver = preview.$file.map { $0?.id }.removeDuplicates().dropFirst()
             .sink { [weak self] _ in self?.objectWillChange.send() }
+        cityLocator.onUpdate = { [weak self] _ in self?.announce() }
     }
 
     // MARK: Lifecycle
@@ -457,6 +555,7 @@ final class CandyPlazaService: ObservableObject {
             return
         }
         hasStarted = true
+        if sharesListening { cityLocator.request() }
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let satisfied = path.status == .satisfied
             let kinds: [NWInterface.InterfaceType] = [.wifi, .cellular, .wiredEthernet, .other]
@@ -470,6 +569,7 @@ final class CandyPlazaService: ObservableObject {
             guard let service = self else { return }
             Task { @MainActor in
                 guard service.hasStarted else { return }
+                if service.sharesListening { service.cityLocator.request() }
                 if service.connectionState == .disconnected { service.reconnectNow() } else { service.announce() }
             }
         }
@@ -858,6 +958,7 @@ final class CandyPlazaService: ObservableObject {
     func setSharesListening(_ enabled: Bool) {
         sharesListening = enabled
         userDefaults.set(enabled, forKey: "candy_shares_listening")
+        if enabled { cityLocator.request() }
         synchronizeShare()
     }
 
@@ -940,8 +1041,10 @@ final class CandyPlazaService: ObservableObject {
         let via = (node.addrs ?? []).prefix(8).map { $0.contains("/p2p/") ? $0 : "\($0)/p2p/\(node.peerId)" }
         let now = Int64(Date().timeIntervalSince1970 * 1000) + clockOffsetMs
         lastSeq = max(now, lastSeq + 1)
-        var body = CandyPlazaBody(peerId: peerID, name: nickname, avatar: avatar, region: region,
-            geo: visible ? geo : nil, client: "ios", via: Array(via), files: [], seq: lastSeq)
+        // City from the phone itself when allowed; otherwise the node's IP lookup.
+        let place = cityLocator.place
+        var body = CandyPlazaBody(peerId: peerID, name: nickname, avatar: avatar, region: place?.region ?? region,
+            geo: visible ? (place?.geo ?? geo) : nil, client: "ios", via: Array(via), files: [], seq: lastSeq)
         if visible, let track = listeningTrack {
             body.listening = CandyAnnouncedListening(title: String(track.title.prefix(300)),
                 artist: String(track.artist.prefix(300)), isPlaying: listeningIsPlaying)

@@ -214,15 +214,28 @@ backend_binary() {
   echo "$out"
 }
 
-install_geoip() { # 服务文件引用的 MMDB 不在安装目录时，从仓库复制
-  local db name
-  db="$(unit_arg geoip-db)"
-  [ -n "$db" ] && [ ! -f "$db" ] || return 0
-  name="${db##*/}"
-  if [ -f "$REPO_DIR/backend/$name" ]; then
-    install -m 644 "$REPO_DIR/backend/$name" "$db"
-    info "已复制 GeoIP 数据库 → $db"
-  fi
+geoip_files() { # 服务文件引用的地区数据库：GeoLite2 MMDB + ip2region xdb（逗号分隔）
+  unit_arg geoip-db
+  unit_arg ip2region | tr ',' '
+'
+}
+
+install_geoip() { # 仓库里的数据库比安装目录新（或安装目录没有）时复制过去
+  local db name src fetched=
+  for db in $(geoip_files); do
+    name="${db##*/}"; src="$REPO_DIR/backend/$name"
+    if [ ! -f "$src" ] && [ ! -f "$db" ] && [ -z "$fetched" ] && [[ "$name" == ip2region* ]]; then
+      fetched=1
+      info "仓库里没有 ip2region 数据库，下载最新版"
+      bash "$REPO_DIR/scripts/update-geoip.sh" ip2region || warn "ip2region 下载失败，节点只用 GeoLite2（国内城市精度较低）"
+    fi
+    [ -f "$src" ] || continue
+    if [ ! -f "$db" ] || ! cmp -s "$src" "$db"; then
+      mkdir -p "$(dirname "$db")"
+      install -m 644 "$src" "$db.new" && mv -f "$db.new" "$db"
+      info "已更新地区数据库 → $db"
+    fi
+  done
 }
 
 check_geoip() {
@@ -236,6 +249,11 @@ check_geoip() {
     warn "GeoIP 数据库 $db 不存在，节点会启动失败。请放置 MMDB 文件，或从服务文件中删除 -geoip-db 参数。"
     return 1
   fi
+  local xdb
+  for xdb in $(unit_arg ip2region | tr ',' ' '); do
+    if [ -f "$xdb" ]; then info "ip2region 数据库：$xdb（$(du -h "$xdb" | cut -f1)）"
+    else warn "ip2region 数据库 $xdb 不存在：国内城市精度较低（scripts/update-geoip.sh ip2region 下载）"; fi
+  done
 }
 
 cmd_install() {

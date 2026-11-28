@@ -110,6 +110,12 @@ start_node() {
   (cd "$REPO_DIR/backend" && CGO_ENABLED=0 go build -o "$NODE_BIN" .)
   local args=(-http "127.0.0.1:$API_PORT" -key "$(native "$RUN_DIR/state/node.key")" -listen "/ip4/127.0.0.1/tcp/$LIBP2P_PORT/ws")
   if [ -f "$GEOIP_DB" ]; then args+=(-geoip-db "$(native "$GEOIP_DB")"); else warn "没有 $GEOIP_DB，地区显示为“地区未知”"; fi
+  local xdb xdbs=()
+  for xdb in "$REPO_DIR/backend/ip2region_v4.xdb" "$REPO_DIR/backend/ip2region_v6.xdb"; do
+    [ -f "$xdb" ] && xdbs+=("$(native "$xdb")")
+  done
+  if [ ${#xdbs[@]} -gt 0 ]; then args+=(-ip2region "$(IFS=,; echo "${xdbs[*]}")")
+  else warn "没有 ip2region 数据库，国内城市精度较低（scripts/update-geoip.sh ip2region 下载）"; fi
   info "启动节点：API 127.0.0.1:$API_PORT，浏览器 libp2p ws://127.0.0.1:$LIBP2P_PORT"
   # Git Bash 会把以 / 开头的参数（multiaddr）当成路径改写成 C:/Program Files/Git/...，关掉这个转换
   MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' spawn node "$REPO_DIR/backend" "$NODE_BIN" "${args[@]}"

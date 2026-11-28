@@ -52,7 +52,8 @@ go build -o server.exe .
 .\server.exe -http 127.0.0.1:8003 -key .\state\node.key `
   -listen '/ip4/127.0.0.1/tcp/4002/ws' `
   -announce '/dns4/music.webtrc.eu.cc/tcp/443/wss' `
-  -gateway-url 'wss://music.webtrc.eu.cc/ws' -web-dir ..\web\dist -geoip-db .\GeoLite2-City2.mmdb
+  -gateway-url 'wss://music.webtrc.eu.cc/ws' -web-dir ..\web\dist -geoip-db .\GeoLite2-City2.mmdb `
+  -ip2region '.\ip2region_v4.xdb,.\ip2region_v6.xdb'
 ```
 
 | 参数 / 环境变量 | 说明 |
@@ -65,6 +66,7 @@ go build -o server.exe .
 | `-web-dir` | 可选：直接托管 `web/dist`。 |
 | `STUN_URLS`、`TURN_URLS`、`TURN_REST_SECRET` | ICE 配置。TURN 采用 coturn REST 凭据，有效期 1 小时，见 `deploy/compose.yaml`。 |
 | `-geoip-db`、`-trusted-proxies` | 本地 MMDB 地区查询（不调用外部服务）。回环地址默认视为可信代理。 |
+| `-ip2region` / `IP2REGION_DB` | 可选：ip2region xdb 文件（IPv4、IPv6，逗号分隔），国内 IP 精确到城市。文件缺失时节点只用 GeoLite2 并在日志中提示。 |
 
 需要放行的端口：单节点只需 443/tcp（建议只放行 Cloudflare IP 段）；多节点时再放行 4001/tcp、4001/udp。nginx 模板见 `deploy/nginx.conf`，systemd 模板见 `webtrc.service`。
 
@@ -78,7 +80,7 @@ go build -o server.exe .
 |---|---|
 | `GET /api/bootstrap` | `{"nodes":[{"peerId","addrs":[…/p2p/…],"gateway"}],"dht":"/auru/kad/1.0.0","topic":"auru/plaza/1"}`，即初始节点列表 |
 | `GET /api/ice` | 给浏览器使用的 `{"iceServers":[…]}` |
-| `GET /api/whoami` | `{"region":"广东省","geo":[23.1,113.3]}`，浏览器写进自己的公告（`geo` 是 GeoIP 城市坐标，取整到 0.1°，未知时为 null） |
+| `GET /api/whoami` | `{"region":"广东-广州","geo":[23.1,113.3]}`，浏览器写进自己的公告（`geo` 是 GeoIP 城市坐标，取整到 0.1°，未知时为 null） |
 | `GET /api/plaza` | 当前广场快照（调试用） |
 | `GET /ws` | iOS 网关 WebSocket（见下文） |
 
@@ -133,4 +135,15 @@ S→C {"type":"plaza-update","entry"} / {"type":"plaza-remove","peerId"} / {"typ
 
 ## 本地 IP 地区
 
-`-geoip-db` 或 `GEOIP_DB_PATH` 指向 GeoLite2-City 等 MMDB 文件。国内 IP 显示省份（如 `广东省`、`香港`），国外 IP 显示 `国家-城市`，查不到时显示 `地区未知`。不会把 IP 发给外部服务，广场里只出现大致地区。
+`-geoip-db` 或 `GEOIP_DB_PATH` 指向 GeoLite2-City MMDB 文件；`-ip2region` 指向 ip2region 的 xdb 文件。
+国内 IP 显示 `省份-城市`（如 `广东-深圳`，直辖市只显示 `北京`），国外 IP 显示 `国家-城市`，查不到时显示 `地区未知`。
+坐标取整到 0.1°。不会把 IP 发给外部服务，广场里只出现大致地区。
+
+- 国内 IP 先查 ip2region（名称更准，GeoLite2 对很多国内网段只给出“中国”）；坐标来自内置的
+  `internal/geoip/cn_places.go`（`scripts/gen-cn-places.py` 生成，覆盖 ip2region 的全部省市）。
+  ip2region 只知道省份时，若 GeoLite2 在同一省份查到了城市就用它，否则落在省会。
+- 国外 IP、ip2region 查不到的 IP 用 GeoLite2。
+
+更新数据库：`scripts/update-geoip.sh [all|geolite|ip2region]`，下载到 `backend/`。GeoLite2 需要免费的
+MaxMind 账号（`MAXMIND_ACCOUNT_ID`、`MAXMIND_LICENSE_KEY`，环境变量或 `/etc/webtrc.env`）。之后
+`sudo ./deploy.sh install` 把有变化的数据库复制到安装目录并重启；仓库里没有 ip2region 文件时 install 会自动下载。

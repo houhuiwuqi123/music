@@ -90,12 +90,35 @@ export class WebPreview {
     audio.addEventListener('pause', () => { if (mine() && this.state.phase !== 'failed') this.state.phase = 'paused' })
     audio.addEventListener('waiting', () => { if (mine() && !audio.paused) this.state.phase = 'buffering' })
     audio.addEventListener('error', () => { if (mine()) this.fail('浏览器无法播放该格式，可下载后用本地播放器打开') })
+    // Only the streamed (MediaSource) copy ends: a finished download plays with loop set.
+    audio.addEventListener('ended', () => { if (mine()) this.replay(audio) })
+  }
+
+  /**
+   * The song keeps repeating until the user pauses or picks another one. A streamed copy may
+   * have dropped its start (the browser caps buffered audio), so loop the verified download.
+   */
+  private replay(audio: HTMLAudioElement) {
+    const done = this.task(this.state.cid, 'complete')
+    if (done?.url && audio.src !== done.url) {
+      for (const fn of this.cleanup) fn()
+      this.cleanup = []
+      const stream = this.objectURL
+      this.objectURL = undefined
+      this.start(done.url)
+      if (stream) URL.revokeObjectURL(stream)
+      return
+    }
+    audio.currentTime = 0
+    void audio.play().catch(() => undefined)
   }
 
   private start(url: string) {
     const audio = this.audio
     if (!audio) return
     audio.src = url
+    // A MediaSource copy cannot loop by itself (see replay); anything else loops natively.
+    audio.loop = url !== this.objectURL
     void audio.play().catch((error: Error) => {
       if (error.name !== 'AbortError') this.fail(error.name === 'NotAllowedError' ? '浏览器阻止了自动播放，请再点一次' : error.message)
     })

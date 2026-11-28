@@ -38,11 +38,17 @@ func main() {
 	gatewayURL := flag.String("gateway-url", os.Getenv("NODE_GATEWAY_URL"), "public wss:// URL of this node's /ws gateway, listed in /api/bootstrap")
 	webDir := flag.String("web-dir", "", "optional directory with the built Vue app to serve at /")
 	database := flag.String("geoip-db", os.Getenv("GEOIP_DB_PATH"), "local GeoLite2 City/Country MMDB path")
+	ip2region := flag.String("ip2region", os.Getenv("IP2REGION_DB"), "comma-separated ip2region xdb files (IPv4 and/or IPv6) for Chinese province/city names")
 	proxyCIDRs := flag.String("trusted-proxies", os.Getenv("TRUSTED_PROXY_CIDRS"), "comma-separated trusted reverse proxy CIDRs (loopback is always trusted)")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "", log.LstdFlags)
-	regions, err := geoip.Open(*database)
+	regions, err := geoip.Open(*database, split(*ip2region)...)
+	if err != nil && *ip2region != "" {
+		// ip2region only refines Chinese regions: run on GeoLite2 alone rather than not at all.
+		logger.Printf("ip2region disabled: %v", err)
+		regions, err = geoip.Open(*database)
+	}
 	if err != nil {
 		logger.Fatal(err)
 	}

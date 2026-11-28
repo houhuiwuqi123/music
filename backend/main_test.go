@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -355,3 +356,46 @@ func TestHTTPAnnounce(t *testing.T) {
 		t.Fatalf("future seq: %d %v", code, out)
 	}
 }
+
+// A page fires announcements from several places at once (heartbeat, reconnect, rename). The
+// older one can lose the race to the newer one inside the node; it must count as stale (200),
+// never as a 400 "validation ignored".
+func TestHTTPAnnounceConcurrent(t *testing.T) {
+	_, srv := startNode(t)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	pub, _ := crypto.UnmarshalEd25519PublicKey(key.Public().(ed25519.PublicKey))
+	id, _ := peer.IDFromPublicKey(pub)
+	_, otherKey, _ := ed25519.GenerateKey(rand.Reader)
+	otherPub, _ := crypto.UnmarshalEd25519PublicKey(otherKey.Public().(ed25519.PublicKey))
+	otherNode, _ := peer.IDFromPublicKey(otherPub)
+	base := time.Now().UnixMilli()
+	var wg sync.WaitGroup
+	errs := make(chan string, 200)
+	for i := 0; i < 200; i++ {
+		body := node.PlazaBody{V: 1, PeerID: id.String(), Name: "网页", Client: "web",
+			Via: []string{"/ip4/203.0.113.9/tcp/4001/p2p/" + otherNode.String()}, Seq: base + int64(i)}
+		data, _ := json.Marshal(envelope(key, body))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := http.Post(srv.URL+"/api/announce", "text/plain", strings.NewReader(string(data)))
+			if err != nil {
+				errs <- err.Error()
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				var out map[string]any
+				_ = json.NewDecoder(resp.Body).Decode(&out)
+				errs <- http.StatusText(resp.StatusCode) + " " + toString(out["error"])
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}
+
+func toString(v any) string { s, _ := v.(string); return s }
